@@ -1,7 +1,7 @@
 /* Note: this CSS is only an example, you can overlay whatever you want using the activeItem logic */
 
+/* 光标由组件 JS 根据是否位于中央圆形区域动态控制 */
 #infinite-grid-menu-canvas {
-  cursor: grab;
   width: 100%;
   height: 100%;
   overflow: hidden;
@@ -9,109 +9,228 @@
   outline: none;
 }
 
-#infinite-grid-menu-canvas:active {
-  cursor: grabbing;
-}
-
-.action-button {
-  position: absolute;
-  left: 50%;
-  z-index: 10;
-  width: 60px;
-  height: 60px;
-  display: grid;
-  place-items: center;
-  background: #5227ff;
-  border: none;
-  border-radius: 50%;
-  cursor: pointer;
-  border: 5px solid #000;
-}
+/* ---------- 左侧：歌曲信息 ---------- */
 
 .face-title {
   user-select: none;
   position: absolute;
-  font-weight: 900;
-  font-size: 3rem;
-  left: 1.6em;
   top: 50%;
-}
-
-.action-button-icon {
-  user-select: none;
-  position: relative;
-  color: #fff;
-  top: 2px;
-  font-size: 26px;
-}
-
-.face-title {
-  position: absolute;
-  top: 50%;
-  transform: translate(20%, -50%);
+  left: 8%;
+  margin: 0;
+  font-size: clamp(2.5rem, 5vw, 4rem);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: #ffffff;
+  text-shadow: 0 2px 30px rgba(0, 0, 0, 0.7);
+  transform: translate(-8%, -115%);
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 0.15s ease,
+    transform 0.15s ease;
 }
 
 .face-title.active {
   opacity: 1;
-  transform: translate(20%, -50%);
+  transform: translate(0, -115%);
   pointer-events: auto;
-  transition: 0.5s ease;
+  transition:
+    opacity 0.5s ease,
+    transform 0.5s ease;
 }
 
-.face-title.inactive {
-  pointer-events: none;
-  opacity: 0;
-  transition: 0.1s ease;
-}
-
-.face-description {
+.face-artist {
   user-select: none;
   position: absolute;
-  max-width: 10ch;
   top: 50%;
-  font-size: 1.2rem;
-  right: 1%;
-  transform: translate(0, -50%);
-}
-
-.face-description.active {
-  opacity: 1;
-  transform: translate(-90%, -50%);
-  pointer-events: auto;
-  transition: 0.5s ease;
-}
-
-.face-description.inactive {
-  pointer-events: none;
-  transform: translate(-60%, -50%);
+  left: 8%;
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 500;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.55);
+  transform: translate(-8%, 0.4em);
   opacity: 0;
-  transition: 0.1s ease;
+  pointer-events: none;
+  transition:
+    opacity 0.15s ease,
+    transform 0.15s ease;
 }
 
-.action-button {
+.face-artist.active {
+  opacity: 1;
+  transform: translate(0, 0.4em);
+  pointer-events: auto;
+  transition:
+    opacity 0.5s ease 0.08s,
+    transform 0.5s ease 0.08s;
+}
+
+/* ---------- 右侧：歌词面板（多句滚动，当前句高亮） ---------- */
+
+.lyrics-panel {
+  user-select: none;
+  position: absolute;
+  top: 50%;
+  right: 2.5%;
+  /* 固定占据右侧区域，宽度受限不再向左溢出到圆盘 */
+  width: min(34rem, 38vw);
+  height: 16rem;
+  overflow: hidden;
+  text-align: right;
+  transform: translateY(-50%);
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 22%, #000 78%, transparent);
+  mask-image: linear-gradient(to bottom, transparent, #000 22%, #000 78%, transparent);
+  opacity: 1;
+  transition: opacity 0.5s ease;
+}
+
+.lyrics-panel.inactive {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+
+.lyrics-track {
+  transition: transform 0.45s ease;
+}
+
+.lyric-line {
+  margin: 0;
+  padding: 0.35rem 0;
+  font-size: 1.05rem;
+  font-weight: 500;
+  line-height: 1.45;
+  letter-spacing: 0.02em;
+  /* 长句自动换行，不再单行截断 */
+  white-space: normal;
+  color: rgba(255, 255, 255, 0.32);
+  /* 放大用 transform，不改变布局高度，保证滚动定位稳定 */
+  transform-origin: right center;
+  transition:
+    transform 0.35s ease,
+    color 0.35s ease;
+}
+
+.lyric-line.near {
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.lyric-line.current {
+  transform: scale(1.28);
+  font-weight: 700;
+  color: #ffffff;
+  text-shadow: 0 2px 20px rgba(0, 0, 0, 0.7);
+}
+
+/* ---------- 底部：播放按钮（位于进度条左侧） ---------- */
+
+.progress-play-button {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0 0 1px;
+  border: none;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    color 0.2s ease,
+    transform 0.2s ease;
+}
+
+.progress-play-button:hover {
+  color: #ffffff;
+  transform: scale(1.12);
+}
+
+.progress-play-button:active {
+  transform: scale(0.96);
+}
+
+/* ---------- 底部：歌曲进度条 ---------- */
+
+.progress-bar {
   position: absolute;
   left: 50%;
+  bottom: 1.2rem;
+  transform: translateX(-50%);
+  width: min(42rem, 60vw);
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  z-index: 10;
 }
 
-.action-button.active {
-  bottom: 3.8em;
-  transform: translateX(-50%) scale(1);
-  opacity: 1;
-  pointer-events: auto;
-  transition: 0.5s ease;
+.progress-time {
+  user-select: none;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  color: rgba(255, 255, 255, 0.5);
+  min-width: 2.6em;
+  text-align: center;
 }
 
-.action-button.inactive {
-  bottom: -80px;
-  transform: translateX(-50%) scale(0);
-  opacity: 0;
-  pointer-events: none;
-  transition: 0.1s ease;
+.progress-track {
+  position: relative;
+  flex: 1;
+  height: 14px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  touch-action: none;
+}
+
+.progress-rail,
+.progress-fill {
+  position: absolute;
+  left: 0;
+  height: 3px;
+  border-radius: 999px;
+  transition: height 0.15s ease;
+}
+
+.progress-rail {
+  right: 0;
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.progress-fill {
+  background: #ffffff;
+}
+
+.progress-fill::after {
+  content: '';
+  position: absolute;
+  right: -5px;
+  top: 50%;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 0 10px rgba(255, 255, 255, 0.6);
+  transform: translateY(-50%) scale(0);
+  transition: transform 0.15s ease;
+}
+
+.progress-track:hover .progress-rail,
+.progress-track:hover .progress-fill {
+  height: 5px;
+}
+
+.progress-track:hover .progress-fill::after {
+  transform: translateY(-50%) scale(1);
 }
 
 @media (max-width: 1500px) {
   .face-title,
-  .face-description {
+  .face-artist,
+  .lyrics-panel {
     display: none;
   }
 }

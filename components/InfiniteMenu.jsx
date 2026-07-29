@@ -452,23 +452,41 @@ class ArcballControl {
     this._combinedQuat = quat.create();
 
     canvas.addEventListener('pointerdown', e => {
+      // 只有中央圆形专辑图区域可以拖动，其他区域不响应
+      if (!this.#isInsideDragArea(e)) return;
       vec2.set(this.pointerPos, e.clientX, e.clientY);
       vec2.copy(this.previousPointerPos, this.pointerPos);
       this.isPointerDown = true;
+      canvas.style.cursor = 'grabbing';
     });
     canvas.addEventListener('pointerup', () => {
       this.isPointerDown = false;
+      canvas.style.cursor = 'default';
     });
     canvas.addEventListener('pointerleave', () => {
       this.isPointerDown = false;
+      canvas.style.cursor = 'default';
     });
     canvas.addEventListener('pointermove', e => {
       if (this.isPointerDown) {
         vec2.set(this.pointerPos, e.clientX, e.clientY);
+      } else {
+        canvas.style.cursor = this.#isInsideDragArea(e) ? 'grab' : 'default';
       }
     });
 
     canvas.style.touchAction = 'none';
+  }
+
+  /** 判断指针是否位于画布中央的圆形可拖动区域内 */
+  #isInsideDragArea(e) {
+    const rect = this.canvas.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    const radius = (Math.min(rect.width, rect.height) / 2) * 0.7;
+    const dx = e.clientX - cx;
+    const dy = e.clientY - cy;
+    return dx * dx + dy * dy <= radius * radius;
   }
 
   update(deltaTime, targetFrameDuration = 16) {
@@ -906,29 +924,70 @@ class InfiniteGridMenu {
 const defaultItems = [
   {
     image: 'https://picsum.photos/900/900?grayscale',
-    link: 'https://google.com/',
     title: '',
-    description: ''
+    artist: ''
   }
 ];
+
+/** 秒数格式化为 m:ss */
+function formatTime(sec) {
+  if (!Number.isFinite(sec) || sec < 0) return '0:00';
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+/**
+ * 解析 LRC 歌词文件，返回按时间排序的 [{ time, text }] 数组
+ * @param {string} lrcText
+ */
+function parseLrc(lrcText) {
+  const entries = [];
+  const tagRe = /\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?\]/g;
+  lrcText.split(/\r?\n/).forEach(line => {
+    const matches = [...line.matchAll(tagRe)];
+    if (!matches.length) return;
+    const text = line.replace(tagRe, '').trim();
+    matches.forEach(m => {
+      const minutes = parseInt(m[1], 10);
+      const seconds = parseInt(m[2], 10);
+      const ms = m[3] ? parseInt(m[3].padEnd(3, '0'), 10) : 0;
+      entries.push({ time: minutes * 60 + seconds + ms / 1000, text });
+    });
+  });
+  return entries.sort((a, b) => a.time - b.time);
+}
 
 /**
  * @typedef {Object} InfiniteMenuItem
  * @property {string} image
- * @property {string} [link]
  * @property {string} [title]
- * @property {string} [description]
+ * @property {string} [artist]
  */
 
 /**
  * @param {Object} props
  * @param {InfiniteMenuItem[]} [props.items]
  * @param {number} [props.scale]
+ * @param {string} [props.audioSrc]
+ * @param {string} [props.lrcSrc]
  */
-export default function InfiniteMenu({ items = [], scale = 1.0 }) {
+export default function InfiniteMenu({ items = [], scale = 1.0, audioSrc, lrcSrc }) {
   const canvasRef = useRef(null);
+  const audioRef = useRef(null);
+  const lyricsRef = useRef([]);
+  const lyricsPanelRef = useRef(null);
+  const lyricLineRefs = useRef([]);
   const [activeItem, setActiveItem] = useState(null);
   const [isMoving, setIsMoving] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [lyrics, setLyrics] = useState([]);
+  const [activeLyricIndex, setActiveLyricIndex] = useState(0);
+  const [lineHeights, setLineHeights] = useState([]);
+  const [panelHeight, setPanelHeight] = useState(0);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const progressTrackRef = useRef(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -964,29 +1023,167 @@ export default function InfiniteMenu({ items = [], scale = 1.0 }) {
     };
   }, [items, scale]);
 
-  const handleButtonClick = () => {
-    if (!activeItem?.link) return;
-    if (activeItem.link.startsWith('http')) {
-      window.open(activeItem.link, '_blank');
-    } else {
-      console.log('Internal route:', activeItem.link);
+  useEffect(() => {
+    if (!lrcSrc) return;
+    let cancelled = false;
+    fetch(lrcSrc)
+      .then(res => res.text())
+      .then(text => {
+        if (!cancelled) {
+          const parsed = parseLrc(text);
+          lyricsRef.current = parsed;
+          setLyrics(parsed);
+        }
+      })
+      .catch(err => console.error('Failed to load lyrics:', err));
+    return () => {
+      cancelled = true;
+    };
+  }, [lrcSrc]);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    const handleTimeUpdate = () => {
+      const t = audio.currentTime;
+      setCurrentTime(t);
+      const list = lyricsRef.current;
+      let index = 0;
+      for (let i = 0; i < list.length; i++) {
+        if (list[i].time <= t) {
+          index = i;
+        } else {
+          break;
+        }
+      }
+      setActiveLyricIndex(prev => (prev === index ? prev : index));
+    };
+    const handleLoadedMetadata = () => setDuration(audio.duration || 0);
+    const handleEnded = () => setIsPlaying(false);
+
+    audio.addEventListener('timeupdate', handleTimeUpdate);
+    audio.addEventListener('loadedmetadata', handleLoadedMetadata);
+    audio.addEventListener('durationchange', handleLoadedMetadata);
+    audio.addEventListener('ended', handleEnded);
+
+    // 浏览器缓存可能导致元数据在挂载监听前已加载完成，此时立即同步一次
+    if (audio.readyState >= 1) {
+      handleLoadedMetadata();
     }
+    setCurrentTime(audio.currentTime || 0);
+
+    return () => {
+      audio.removeEventListener('timeupdate', handleTimeUpdate);
+      audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
+      audio.removeEventListener('durationchange', handleLoadedMetadata);
+      audio.removeEventListener('ended', handleEnded);
+      audio.pause();
+    };
+  }, []);
+
+  // 歌词换行后每行高度不固定，渲染完成后实际测量各行与面板高度，窗口尺寸变化时重新测量
+  useEffect(() => {
+    if (!lyrics.length) return;
+
+    const measure = () => {
+      setLineHeights(lyrics.map((_, i) => lyricLineRefs.current[i]?.offsetHeight || 36));
+      setPanelHeight(lyricsPanelRef.current?.clientHeight || 0);
+    };
+
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, [lyrics]);
+
+  const togglePlay = () => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (audio.paused) {
+      audio.play();
+      setIsPlaying(true);
+    } else {
+      audio.pause();
+      setIsPlaying(false);
+    }
+  };
+
+  // 点击或拖动进度条跳转播放位置
+  const handleProgressPointerDown = e => {
+    const audio = audioRef.current;
+    const track = progressTrackRef.current;
+    const total = duration || audio?.duration || 0;
+    if (!audio || !track || !total) return;
+
+    const seekTo = clientX => {
+      const rect = track.getBoundingClientRect();
+      const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+      audio.currentTime = ratio * total;
+      setCurrentTime(audio.currentTime);
+    };
+
+    seekTo(e.clientX);
+    const handleMove = ev => seekTo(ev.clientX);
+    const handleUp = () => {
+      window.removeEventListener('pointermove', handleMove);
+      window.removeEventListener('pointerup', handleUp);
+    };
+    window.addEventListener('pointermove', handleMove);
+    window.addEventListener('pointerup', handleUp);
   };
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
       <canvas id="infinite-grid-menu-canvas" ref={canvasRef} />
 
+      {audioSrc && <audio ref={audioRef} src={audioSrc} preload="auto" />}
+
       {activeItem && (
         <>
           <h2 className={`face-title ${isMoving ? 'inactive' : 'active'}`}>{activeItem.title}</h2>
 
-          <p className={`face-description ${isMoving ? 'inactive' : 'active'}`}> {activeItem.description}</p>
-
-          <div onClick={handleButtonClick} className={`action-button ${isMoving ? 'inactive' : 'active'}`}>
-            <p className="action-button-icon">&#x2197;</p>
-          </div>
+          <p className={`face-artist ${isMoving ? 'inactive' : 'active'}`}>{activeItem.artist}</p>
         </>
+      )}
+
+      {lyrics.length > 0 && (
+        <div ref={lyricsPanelRef} className={`lyrics-panel ${isMoving ? 'inactive' : 'active'}`}>
+          <div
+            className="lyrics-track"
+            style={{
+              transform: `translateY(${(panelHeight / 2 - (lineHeights.slice(0, activeLyricIndex).reduce((sum, h) => sum + h, 0) + (lineHeights[activeLyricIndex] || 0) / 2)).toFixed(1)}px)`
+            }}
+          >
+            {lyrics.map((line, i) => (
+              <p
+                key={i}
+                ref={el => (lyricLineRefs.current[i] = el)}
+                className={`lyric-line${i === activeLyricIndex ? ' current' : Math.abs(i - activeLyricIndex) === 1 ? ' near' : ''}`}
+              >
+                {line.text || ' '}
+              </p>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {audioSrc && (
+        <div className="progress-bar">
+          <button
+            type="button"
+            className="progress-play-button"
+            onClick={togglePlay}
+            aria-label={isPlaying ? '暂停' : '播放'}
+          >
+            {isPlaying ? '❚❚' : '▶'}
+          </button>
+          <span className="progress-time">{formatTime(currentTime)}</span>
+          <div ref={progressTrackRef} className="progress-track" onPointerDown={handleProgressPointerDown}>
+            <div className="progress-rail" />
+            <div className="progress-fill" style={{ width: `${duration ? (currentTime / duration) * 100 : 0}%` }} />
+          </div>
+          <span className="progress-time">{formatTime(duration)}</span>
+        </div>
       )}
     </div>
   );
