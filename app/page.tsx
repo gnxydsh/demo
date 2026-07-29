@@ -1,3 +1,6 @@
+'use client';
+
+import { useState } from "react";
 import InfiniteMenu from "@/components/InfiniteMenu";
 import Galaxy from "@/components/Galaxy";
 
@@ -40,6 +43,8 @@ const items = [
 ];
 
 export default function Home() {
+  const [isPlaying, setIsPlaying] = useState(false);
+
   return (
     <div style={{ height: "100vh", position: "relative" }}>
       <div
@@ -51,6 +56,7 @@ export default function Home() {
         }}
       >
         <Galaxy
+          disableAnimation={!isPlaying}
           mouseInteraction={false}
           mouseRepulsion={false}
           density={1.2}
@@ -60,7 +66,7 @@ export default function Home() {
         />
       </div>
       <div style={{ position: "relative", zIndex: 1, width: "100%", height: "100%" }}>
-        <InfiniteMenu items={items} />
+        <InfiniteMenu items={items} onPlayingChange={setIsPlaying} />
       </div>
     </div>
   );

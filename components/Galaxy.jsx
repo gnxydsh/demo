@@ -172,9 +172,12 @@ void main() {
 }
 `;
 
+const DEFAULT_FOCAL = [0.5, 0.5];
+const DEFAULT_ROTATION = [1.0, 0.0];
+
 export default function Galaxy({
-  focal = [0.5, 0.5],
-  rotation = [1.0, 0.0],
+  focal = DEFAULT_FOCAL,
+  rotation = DEFAULT_ROTATION,
   starSpeed = 0.5,
   density = 1,
   hueShift = 140,
@@ -196,6 +199,10 @@ export default function Galaxy({
   const smoothMousePos = useRef({ x: 0.5, y: 0.5 });
   const targetMouseActive = useRef(0.0);
   const smoothMouseActive = useRef(0.0);
+  const disableAnimationRef = useRef(disableAnimation);
+  useEffect(() => {
+    disableAnimationRef.current = disableAnimation;
+  }, [disableAnimation]);
 
   useEffect(() => {
     if (!ctnDom.current) return;
@@ -265,7 +272,7 @@ export default function Galaxy({
 
     function update(t) {
       animateId = requestAnimationFrame(update);
-      if (!disableAnimation) {
+      if (!disableAnimationRef.current) {
         program.uniforms.uTime.value = t * 0.001;
         program.uniforms.uStarSpeed.value = (t * 0.001 * starSpeed) / 10.0;
       }
@@ -318,7 +325,6 @@ export default function Galaxy({
     starSpeed,
     density,
     hueShift,
-    disableAnimation,
     speed,
     mouseInteraction,
     glowIntensity,

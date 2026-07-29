@@ -1073,7 +1073,7 @@ function parseLrc(lrcText) {
  * @param {string} [props.audioSrc]
  * @param {string} [props.lrcSrc]
  */
-export default function InfiniteMenu({ items = [], scale = 1.0, audioSrc, lrcSrc }) {
+export default function InfiniteMenu({ items = [], scale = 1.0, audioSrc, lrcSrc, onPlayingChange }) {
   const canvasRef = useRef(null);
   const audioRef = useRef(null);
   const lyricsRef = useRef([]);
@@ -1155,7 +1155,8 @@ export default function InfiniteMenu({ items = [], scale = 1.0, audioSrc, lrcSrc
     if (sketchRef.current) {
       sketchRef.current.spinning = isPlaying;
     }
-  }, [isPlaying]);
+    onPlayingChange?.(isPlaying);
+  }, [isPlaying, onPlayingChange]);
 
   // 播放模式同步到 ref，供 audio 事件回调读取最新值
   useEffect(() => {
