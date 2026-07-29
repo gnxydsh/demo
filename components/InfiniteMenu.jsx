@@ -1168,7 +1168,7 @@ export default function InfiniteMenu({ items = [], scale = 1.0, audioSrc, lrcSrc
       )}
 
       {audioSrc && (
-        <div className="progress-bar">
+        <div className={`progress-bar ${isMoving ? 'inactive' : 'active'}`}>
           <button
             type="button"
             className="progress-play-button"
