@@ -56,12 +56,16 @@ precision highp float;
 uniform sampler2D uTex;
 uniform int uItemCount;
 uniform int uAtlasSize;
+uniform int uActiveDisc;
+uniform float uSpinAngle;
 
 out vec4 outColor;
 
 in vec2 vUvs;
 in float vAlpha;
 flat in int vInstanceId;
+
+#define PI 3.141593
 
 void main() {
     int itemIndex = vInstanceId % uItemCount;
@@ -73,19 +77,80 @@ void main() {
 
     ivec2 texSize = textureSize(uTex, 0);
     float imageAspect = float(texSize.x) / float(texSize.y);
-    float containerAspect = 1.0;
-    
-    float scale = max(imageAspect / containerAspect, 
-                     containerAspect / imageAspect);
-    
-    vec2 st = vec2(vUvs.x, 1.0 - vUvs.y);
-    st = (st - 0.5) * scale + 0.5;
-    
-    st = clamp(st, 0.0, 1.0);
-    
-    st = st * cellSize + cellOffset;
-    
-    outColor = texture(uTex, st);
+    float scale = max(imageAspect, 1.0 / imageAspect);
+
+    // 以圆心为原点，r = 1 对应唱片边缘
+    vec2 pRaw = vUvs - 0.5;
+    vec2 p = pRaw;
+    // 正对镜头的唱片在播放时缓慢自转
+    if (vInstanceId == uActiveDisc) {
+        float c = cos(uSpinAngle);
+        float s = sin(uSpinAngle);
+        p = mat2(c, -s, s, c) * p;
+    }
+    float r = length(pRaw) * 2.0;
+    // 高光、印记等角度特征取自旋转后的坐标，随唱片一起转动
+    float angle = atan(p.y, p.x);
+
+    const float labelRadius = 0.42; // 中心标签（专辑封面）半径
+    const float holeRadius = 0.05;  // 中心轴孔半径
+
+    // 远处小唱片的细纹低于像素精度，逐步淡出防止闪烁
+    float ringFreq = 420.0;
+    float fw = fwidth(r) * ringFreq / (2.0 * PI);
+    float detailAA = 1.0 - smoothstep(0.25, 0.85, fw);
+    float aa = max(0.006, fwidth(r) * 1.5);
+
+    // ---------- 黑胶部分 ----------
+    vec3 vinyl = vec3(0.040, 0.040, 0.046);
+
+    // 同心音轨纹路（叠加轻微角向扰动，转动时盘面有流动的纹理感）
+    float grooves = 0.5 + 0.5 * sin(r * ringFreq + sin(angle * 3.0) * 1.2);
+    float grooveMask = smoothstep(labelRadius + 0.02, labelRadius + 0.10, r) * (1.0 - smoothstep(0.93, 0.99, r));
+    vinyl += vec3(grooves * 0.05 * grooveMask * detailAA);
+
+    // 分轨暗环
+    float bands = 0.0;
+    bands += 1.0 - smoothstep(0.004, 0.016, abs(r - 0.58));
+    bands += 1.0 - smoothstep(0.004, 0.016, abs(r - 0.72));
+    bands += 1.0 - smoothstep(0.004, 0.016, abs(r - 0.86));
+    vinyl *= 1.0 - 0.35 * bands * detailAA;
+
+    // 两道相对的扇形反光（烘焙在盘面上，随唱片一起转动）
+    float sheen = pow(max(cos(angle - 0.8), 0.0), 28.0) + pow(max(cos(angle - 0.8 + PI), 0.0), 28.0);
+    float sheenMask = smoothstep(labelRadius + 0.05, labelRadius + 0.20, r) * (1.0 - smoothstep(0.88, 0.98, r));
+    vinyl += vec3(0.55, 0.58, 0.65) * sheen * sheenMask * 0.16;
+
+    // 盘面上的一点微小印记，随自转绕圈，让黑胶的转动更直观
+    vec2 markPos = vec2(cos(2.2), sin(2.2)) * 0.44;
+    float mark = 1.0 - smoothstep(0.004, 0.010, length(p - markPos));
+    vinyl += vec3(0.18, 0.18, 0.19) * mark * detailAA;
+
+    // 外圈压暗 + 边缘一圈细亮线
+    vinyl *= 1.0 - 0.35 * smoothstep(0.95, 1.0, r);
+    vinyl += vec3(0.10) * (1.0 - smoothstep(0.0, 0.008, abs(r - 0.994))) * detailAA;
+
+    // ---------- 标签部分（专辑封面圆形裁剪进标签区） ----------
+    vec2 st = vec2(p.x + 0.5, 0.5 - p.y);
+    vec2 labelUv = (st - 0.5) / labelRadius + 0.5;
+    labelUv = (labelUv - 0.5) * scale + 0.5;
+    labelUv = clamp(labelUv, 0.0, 1.0);
+    labelUv = labelUv * cellSize + cellOffset;
+    vec3 label = texture(uTex, labelUv).rgb * 0.95;
+
+    // ---------- 合成 ----------
+    vec3 color = mix(vinyl, label, 1.0 - smoothstep(labelRadius - aa, labelRadius + aa, r));
+
+    // 标签外圈描边
+    float labelRim = (1.0 - smoothstep(0.0, 0.006, abs(r - labelRadius - 0.005))) * step(labelRadius, r);
+    color += vec3(0.12) * labelRim;
+
+    // 中心轴孔与孔边亮环
+    color = mix(color, vec3(0.015), 1.0 - smoothstep(holeRadius - aa, holeRadius + aa, r));
+    float holeRim = (1.0 - smoothstep(0.0, 0.005, abs(r - holeRadius - 0.004))) * step(holeRadius, r);
+    color += vec3(0.20) * holeRim;
+
+    outColor = vec4(color, 1.0);
     outColor.a *= vAlpha;
 }
 `;
@@ -634,6 +699,9 @@ class InfiniteGridMenu {
   smoothRotationVelocity = 0;
   scaleFactor = 1.0;
   movementActive = false;
+  activeDiscIndex = -1;
+  spinAngle = 0;
+  spinning = false;
 
   constructor(canvas, items, onActiveItemChange, onMovementChange, onInit = null, scale = 1.0) {
     this.canvas = canvas;
@@ -699,7 +767,9 @@ class InfiniteGridMenu {
       uTex: gl.getUniformLocation(this.discProgram, 'uTex'),
       uFrames: gl.getUniformLocation(this.discProgram, 'uFrames'),
       uItemCount: gl.getUniformLocation(this.discProgram, 'uItemCount'),
-      uAtlasSize: gl.getUniformLocation(this.discProgram, 'uAtlasSize')
+      uAtlasSize: gl.getUniformLocation(this.discProgram, 'uAtlasSize'),
+      uActiveDisc: gl.getUniformLocation(this.discProgram, 'uActiveDisc'),
+      uSpinAngle: gl.getUniformLocation(this.discProgram, 'uSpinAngle')
     };
 
     this.discGeo = new DiscGeometry(56, 1);
@@ -798,6 +868,11 @@ class InfiniteGridMenu {
     const gl = this.gl;
     this.control.update(deltaTime, this.TARGET_FRAME_DURATION);
 
+    // 播放时唱片缓慢自转（约 16 秒一圈）
+    if (this.spinning) {
+      this.spinAngle = (this.spinAngle + (deltaTime / 1000) * 0.4) % (Math.PI * 2);
+    }
+
     let positions = this.instancePositions.map(p => vec3.transformQuat(vec3.create(), p, this.control.orientation));
     const scale = 0.25;
     const SCALE_INTENSITY = 0.6;
@@ -849,6 +924,8 @@ class InfiniteGridMenu {
 
     gl.uniform1i(this.discLocations.uItemCount, this.items.length);
     gl.uniform1i(this.discLocations.uAtlasSize, this.atlasSize);
+    gl.uniform1i(this.discLocations.uActiveDisc, this.activeDiscIndex);
+    gl.uniform1f(this.discLocations.uSpinAngle, this.spinAngle);
 
     gl.uniform1f(this.discLocations.uFrames, this.#frames);
     gl.uniform1f(this.discLocations.uScaleFactor, this.scaleFactor);
@@ -904,6 +981,7 @@ class InfiniteGridMenu {
 
     if (!this.control.isPointerDown) {
       const nearestVertexIndex = this.#findNearestVertexIndex();
+      this.activeDiscIndex = nearestVertexIndex;
       const itemIndex = nearestVertexIndex % Math.max(1, this.items.length);
       this.onActiveItemChange(itemIndex);
       const snapDirection = vec3.normalize(vec3.create(), this.#getVertexWorldPosition(nearestVertexIndex));
@@ -1046,6 +1124,13 @@ export default function InfiniteMenu({ items = [], scale = 1.0, audioSrc, lrcSrc
       window.removeEventListener('resize', handleResize);
     };
   }, [items, scale]);
+
+  // 播放/暂停时同步唱片自转状态
+  useEffect(() => {
+    if (sketchRef.current) {
+      sketchRef.current.spinning = isPlaying;
+    }
+  }, [isPlaying]);
 
   useEffect(() => {
     if (!lrcSrc) return;
