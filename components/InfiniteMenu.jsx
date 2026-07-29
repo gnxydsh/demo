@@ -1091,12 +1091,24 @@ export default function InfiniteMenu({ items = [], scale = 1.0, audioSrc, lrcSrc
   const videoRef = useRef(null);
   const [gestureOn, setGestureOn] = useState(false);
   const [gestureStatus, setGestureStatus] = useState('off');
+  // 播放列表手动选曲索引；为 null 时跟随球体激活唱片
+  const [playlistIndex, setPlaylistIndex] = useState(null);
+  // 播放模式：loop 列表循环 / one 单曲循环 / shuffle 随机播放
+  const [playMode, setPlayMode] = useState('loop');
+  const [volume, setVolume] = useState(0.8);
+  const lastVolumeRef = useRef(0.8);
 
-  // 当前歌曲：优先取激活唱片自带的 audio/lrc，兼容组件级 audioSrc/lrcSrc
-  const song = activeItem && activeItem.audio ? activeItem : audioSrc ? { audio: audioSrc, lrc: lrcSrc } : null;
+  // 播放列表：带音频的唱片项
+  const playlist = items.filter(it => it.audio);
+  // 当前歌曲：手动选曲优先，其次激活唱片自带的 audio/lrc，兼容组件级 audioSrc/lrcSrc
+  const followSong = activeItem && activeItem.audio ? activeItem : audioSrc ? { audio: audioSrc, lrc: lrcSrc } : null;
+  const song = playlistIndex != null && playlist.length ? playlist[playlistIndex] : followSong;
   const currentAudio = song?.audio || null;
   const currentLrc = song?.lrc || null;
   const isPlayingRef = useRef(false);
+  const playModeRef = useRef(playMode);
+  // 保存最新切歌函数，供 audio ended 回调使用
+  const advanceRef = useRef(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -1105,6 +1117,8 @@ export default function InfiniteMenu({ items = [], scale = 1.0, audioSrc, lrcSrc
     const handleActiveItem = index => {
       const itemIndex = index % items.length;
       setActiveItem(items[itemIndex]);
+      // 球体转动切换激活唱片时，取消手动选曲，恢复跟随球体
+      setPlaylistIndex(null);
     };
 
     if (canvas) {
@@ -1140,6 +1154,11 @@ export default function InfiniteMenu({ items = [], scale = 1.0, audioSrc, lrcSrc
       sketchRef.current.spinning = isPlaying;
     }
   }, [isPlaying]);
+
+  // 播放模式同步到 ref，供 audio 事件回调读取最新值
+  useEffect(() => {
+    playModeRef.current = playMode;
+  }, [playMode]);
 
   // 切换歌曲：暂停时仅换源，播放中换源后继续播放新歌
   useEffect(() => {
@@ -1195,7 +1214,14 @@ export default function InfiniteMenu({ items = [], scale = 1.0, audioSrc, lrcSrc
       setActiveLyricIndex(prev => (prev === index ? prev : index));
     };
     const handleLoadedMetadata = () => setDuration(audio.duration || 0);
-    const handleEnded = () => setIsPlaying(false);
+    const handleEnded = () => {
+      if (playModeRef.current === 'one') {
+        audio.currentTime = 0;
+        audio.play().catch(() => setIsPlaying(false));
+        return;
+      }
+      advanceRef.current?.(1);
+    };
 
     audio.addEventListener('timeupdate', handleTimeUpdate);
     audio.addEventListener('loadedmetadata', handleLoadedMetadata);
@@ -1426,6 +1452,57 @@ export default function InfiniteMenu({ items = [], scale = 1.0, audioSrc, lrcSrc
     }
   };
 
+  // 当前曲目在播放列表中的下标（跟随球体时按激活唱片匹配）
+  const currentPlaylistIndex = () => {
+    const idx = playlist.findIndex(p => p === followSong);
+    return idx >= 0 ? idx : 0;
+  };
+
+  // 切歌：dir 为 1 下一曲 / -1 上一曲；随机模式下自动随机挑选
+  const advanceTrack = dir => {
+    if (!playlist.length) return;
+    setPlaylistIndex(prev => {
+      const base = prev != null ? prev : currentPlaylistIndex();
+      if (playModeRef.current === 'shuffle' && dir === 1) {
+        if (playlist.length === 1) return base;
+        let next = base;
+        while (next === base) next = Math.floor(Math.random() * playlist.length);
+        return next;
+      }
+      return (base + dir + playlist.length) % playlist.length;
+    });
+    // 切歌后立即播放（currentAudio 变化时由副作用接管播放）
+    isPlayingRef.current = true;
+    setIsPlaying(true);
+  };
+
+  // 供 audio ended 回调拿到最新的切歌函数
+  useEffect(() => {
+    advanceRef.current = advanceTrack;
+  });
+
+  // 播放模式循环切换：列表循环 → 单曲循环 → 随机播放
+  const cyclePlayMode = () => {
+    setPlayMode(m => (m === 'loop' ? 'one' : m === 'one' ? 'shuffle' : 'loop'));
+  };
+
+  // 音量同步到 audio 元素
+  useEffect(() => {
+    if (audioRef.current) {
+      audioRef.current.volume = volume;
+    }
+  }, [volume]);
+
+  // 点击喇叭：静音 / 恢复之前音量
+  const toggleMute = () => {
+    if (volume > 0) {
+      lastVolumeRef.current = volume;
+      setVolume(0);
+    } else {
+      setVolume(lastVolumeRef.current > 0 ? lastVolumeRef.current : 0.8);
+    }
+  };
+
   // 点击或拖动进度条跳转播放位置
   const handleProgressPointerDown = e => {
     const audio = audioRef.current;
@@ -1486,21 +1563,97 @@ export default function InfiniteMenu({ items = [], scale = 1.0, audioSrc, lrcSrc
       )}
 
       {currentAudio && (
-        <div className={`progress-bar ${isMoving ? 'inactive' : 'active'}`}>
-          <button
-            type="button"
-            className="progress-play-button"
-            onClick={togglePlay}
-            aria-label={isPlaying ? '暂停' : '播放'}
-          >
-            {isPlaying ? '❚❚' : '▶'}
-          </button>
-          <span className="progress-time">{formatTime(currentTime)}</span>
-          <div ref={progressTrackRef} className="progress-track" onPointerDown={handleProgressPointerDown}>
-            <div className="progress-rail" />
-            <div className="progress-fill" style={{ width: `${duration ? (currentTime / duration) * 100 : 0}%` }} />
+        <div className={`player-bar ${isMoving ? 'inactive' : 'active'}`}>
+          <div className="player-controls">
+            <button
+              type="button"
+              className={`player-icon-button${playMode !== 'loop' ? ' on' : ''}`}
+              onClick={cyclePlayMode}
+              aria-label={{ loop: '列表循环', one: '单曲循环', shuffle: '随机播放' }[playMode]}
+              title={{ loop: '列表循环', one: '单曲循环', shuffle: '随机播放' }[playMode]}
+            >
+              {playMode === 'shuffle' ? (
+                <svg viewBox="0 0 24 24">
+                  <path d="M10.59 9.17 5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z" />
+                </svg>
+              ) : playMode === 'one' ? (
+                <svg viewBox="0 0 24 24">
+                  <path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4zm-4-2V9h-1l-2 1v1h1.5v4H13z" />
+                </svg>
+              ) : (
+                <svg viewBox="0 0 24 24">
+                  <path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z" />
+                </svg>
+              )}
+            </button>
+
+            <button type="button" className="player-icon-button" onClick={() => advanceTrack(-1)} aria-label="上一曲">
+              <svg viewBox="0 0 24 24">
+                <path d="M6 6h2v12H6zm3.5 6 8.5 6V6z" />
+              </svg>
+            </button>
+
+            <button
+              type="button"
+              className="player-play-button"
+              onClick={togglePlay}
+              aria-label={isPlaying ? '暂停' : '播放'}
+            >
+              {isPlaying ? (
+                <svg viewBox="0 0 24 24">
+                  <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
+                </svg>
+              ) : (
+                <svg viewBox="0 0 24 24" className="play-icon">
+                  <path d="M8 5v14l11-7z" />
+                </svg>
+              )}
+            </button>
+
+            <button type="button" className="player-icon-button" onClick={() => advanceTrack(1)} aria-label="下一曲">
+              <svg viewBox="0 0 24 24">
+                <path d="M6 18l8.5-6L6 6v12zM16 6h2v12h-2z" />
+              </svg>
+            </button>
+
+            <div className="volume-control">
+              <button
+                type="button"
+                className="player-icon-button"
+                onClick={toggleMute}
+                aria-label={volume === 0 ? '取消静音' : '静音'}
+              >
+                {volume === 0 ? (
+                  <svg viewBox="0 0 24 24">
+                    <path d="M16.5 12A4.5 4.5 0 0 0 14 7.97v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51A8.8 8.8 0 0 0 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3 3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06a8.99 8.99 0 0 0 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4 9.91 6.09 12 8.18V4z" />
+                  </svg>
+                ) : (
+                  <svg viewBox="0 0 24 24">
+                    <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3a4.5 4.5 0 0 0-2.5-4.03v8.05A4.5 4.5 0 0 0 16.5 12zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z" />
+                  </svg>
+                )}
+              </button>
+              <input
+                type="range"
+                className="volume-slider"
+                min="0"
+                max="1"
+                step="0.01"
+                value={volume}
+                onChange={e => setVolume(parseFloat(e.target.value))}
+                aria-label="音量"
+              />
+            </div>
           </div>
-          <span className="progress-time">{formatTime(duration)}</span>
+
+          <div className="player-progress">
+            <span className="progress-time">{formatTime(currentTime)}</span>
+            <div ref={progressTrackRef} className="progress-track" onPointerDown={handleProgressPointerDown}>
+              <div className="progress-rail" />
+              <div className="progress-fill" style={{ width: `${duration ? (currentTime / duration) * 100 : 0}%` }} />
+            </div>
+            <span className="progress-time">{formatTime(duration)}</span>
+          </div>
         </div>
       )}
 
