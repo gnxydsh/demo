@@ -240,6 +240,81 @@
   transform: translateY(-50%) scale(1);
 }
 
+/* ---------- 手势控制 ---------- */
+
+.gesture-toggle {
+  position: absolute;
+  top: 1.2rem;
+  right: 1.2rem;
+  z-index: 20;
+  padding: 0.45rem 1rem;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.35);
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 0.8rem;
+  letter-spacing: 0.12em;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+  transition:
+    background 0.2s ease,
+    color 0.2s ease,
+    border-color 0.2s ease;
+}
+
+.gesture-toggle:hover {
+  background: rgba(255, 255, 255, 0.14);
+  color: #ffffff;
+}
+
+.gesture-toggle.on {
+  border-color: rgba(255, 255, 255, 0.65);
+  color: #ffffff;
+}
+
+.gesture-preview {
+  position: absolute;
+  right: 1.2rem;
+  bottom: 4.5rem;
+  z-index: 20;
+  width: 160px;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: #000000;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+}
+
+.gesture-preview video {
+  display: block;
+  width: 100%;
+  /* 镜像显示，与手在画面中的移动方向一致 */
+  transform: scaleX(-1);
+  opacity: 0.85;
+}
+
+.gesture-status {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 4px 0;
+  text-align: center;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: #ffffff;
+  background: rgba(0, 0, 0, 0.5);
+  transition: background 0.2s ease;
+}
+
+.gesture-status.fist {
+  background: rgba(30, 140, 80, 0.6);
+}
+
+.gesture-status.error {
+  background: rgba(180, 40, 40, 0.6);
+}
+
 @media (max-width: 1500px) {
   .face-title,
   .face-artist,

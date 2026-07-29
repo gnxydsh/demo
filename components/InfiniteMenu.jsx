@@ -478,6 +478,25 @@ class ArcballControl {
     canvas.style.touchAction = 'none';
   }
 
+  /** 手势等外部指针：按下（clientX/clientY 坐标系） */
+  externalDown(x, y) {
+    vec2.set(this.pointerPos, x, y);
+    vec2.copy(this.previousPointerPos, this.pointerPos);
+    this.isPointerDown = true;
+  }
+
+  /** 手势等外部指针：移动 */
+  externalMove(x, y) {
+    if (this.isPointerDown) {
+      vec2.set(this.pointerPos, x, y);
+    }
+  }
+
+  /** 手势等外部指针：抬起释放 */
+  externalUp() {
+    this.isPointerDown = false;
+  }
+
   /** 判断指针是否位于画布中央的圆形可拖动区域内 */
   #isInsideDragArea(e) {
     const rect = this.canvas.getBoundingClientRect();
@@ -988,6 +1007,10 @@ export default function InfiniteMenu({ items = [], scale = 1.0, audioSrc, lrcSrc
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const progressTrackRef = useRef(null);
+  const sketchRef = useRef(null);
+  const videoRef = useRef(null);
+  const [gestureOn, setGestureOn] = useState(false);
+  const [gestureStatus, setGestureStatus] = useState('off');
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -1007,6 +1030,7 @@ export default function InfiniteMenu({ items = [], scale = 1.0, audioSrc, lrcSrc
         sk => sk.run(),
         scale
       );
+      sketchRef.current = sketch;
     }
 
     const handleResize = () => {
@@ -1096,6 +1120,189 @@ export default function InfiniteMenu({ items = [], scale = 1.0, audioSrc, lrcSrc
     return () => window.removeEventListener('resize', measure);
   }, [lyrics]);
 
+  // 手势控制：握拳 = 抓取拖动，移动拳头 = 旋转球体，张手 = 释放并播放
+  useEffect(() => {
+    if (!gestureOn) return;
+
+    let cancelled = false;
+    let landmarker = null;
+    let stream = null;
+    let rafId = 0;
+    const video = videoRef.current;
+
+    const CONFIRM_FRAMES = 3; // 手势状态切换需连续确认的帧数，防抖
+    let grabbing = false;
+    let fistFrames = 0;
+    let openFrames = 0;
+    let smoothX = null;
+    let smoothY = null;
+    let lastStatus = '';
+
+    const reportStatus = s => {
+      if (s !== lastStatus) {
+        lastStatus = s;
+        setGestureStatus(s);
+      }
+    };
+
+    const dist3 = (a, b) => Math.hypot(a.x - b.x, a.y - b.y, (a.z || 0) - (b.z || 0));
+
+    // 依据 4 根手指（食/中/无名/小）指尖与指根到手腕的距离比判断握拳/张手
+    const classify = lm => {
+      const wrist = lm[0];
+      const fingers = [
+        [8, 6],
+        [12, 10],
+        [16, 14],
+        [20, 18]
+      ];
+      let curled = 0;
+      let extended = 0;
+      for (const [tip, pip] of fingers) {
+        const ratio = dist3(lm[tip], wrist) / (dist3(lm[pip], wrist) + 1e-6);
+        if (ratio < 1.05) curled++;
+        else if (ratio > 1.35) extended++;
+      }
+      if (curled >= 3) return 'fist';
+      if (extended >= 3) return 'open';
+      return 'unknown';
+    };
+
+    // 张手释放后：若未在播放则开始播放
+    const playAudio = () => {
+      const audio = audioRef.current;
+      if (audio && audio.paused) {
+        audio
+          .play()
+          .then(() => setIsPlaying(true))
+          .catch(() => {});
+      }
+    };
+
+    const handleResult = result => {
+      const control = sketchRef.current?.control;
+      const canvas = canvasRef.current;
+      const lm = result?.landmarks?.[0];
+
+      if (!lm) {
+        fistFrames = 0;
+        openFrames = 0;
+        if (grabbing) {
+          grabbing = false;
+          control?.externalUp();
+        }
+        reportStatus('no-hand');
+        return;
+      }
+
+      // 掌心位置：手腕 + 四指掌根平均，比单点更稳
+      let px = 0;
+      let py = 0;
+      for (const i of [0, 5, 9, 13, 17]) {
+        px += lm[i].x;
+        py += lm[i].y;
+      }
+      px /= 5;
+      py /= 5;
+
+      // 镜像映射到画布 client 坐标，并做指数平滑
+      const rect = canvas.getBoundingClientRect();
+      const cx = rect.left + (1 - px) * rect.width;
+      const cy = rect.top + py * rect.height;
+      smoothX = smoothX == null ? cx : smoothX + (cx - smoothX) * 0.45;
+      smoothY = smoothY == null ? cy : smoothY + (cy - smoothY) * 0.45;
+
+      const g = classify(lm);
+      if (g === 'fist') {
+        fistFrames++;
+        openFrames = 0;
+      } else if (g === 'open') {
+        openFrames++;
+        fistFrames = 0;
+      } else {
+        fistFrames = 0;
+        openFrames = 0;
+      }
+
+      if (!grabbing) {
+        if (fistFrames >= CONFIRM_FRAMES) {
+          grabbing = true;
+          fistFrames = 0;
+          control?.externalDown(smoothX, smoothY);
+          reportStatus('fist');
+        } else {
+          reportStatus('open');
+        }
+      } else {
+        control?.externalMove(smoothX, smoothY);
+        if (openFrames >= CONFIRM_FRAMES) {
+          grabbing = false;
+          openFrames = 0;
+          control?.externalUp();
+          reportStatus('open');
+          playAudio();
+        }
+      }
+    };
+
+    const setup = async () => {
+      try {
+        reportStatus('loading');
+        const { FilesetResolver, HandLandmarker } = await import('@mediapipe/tasks-vision');
+        const vision = await FilesetResolver.forVisionTasks('/vision_wasm');
+        const createOptions = delegate => ({
+          baseOptions: { modelAssetPath: '/models/hand_landmarker.task', delegate },
+          runningMode: 'VIDEO',
+          numHands: 1
+        });
+        try {
+          landmarker = await HandLandmarker.createFromOptions(vision, createOptions('GPU'));
+        } catch {
+          landmarker = await HandLandmarker.createFromOptions(vision, createOptions('CPU'));
+        }
+        if (cancelled) return;
+
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { width: 640, height: 480, facingMode: 'user' }
+        });
+        if (cancelled) {
+          stream.getTracks().forEach(t => t.stop());
+          return;
+        }
+        video.srcObject = stream;
+        await video.play();
+
+        let lastVideoTime = -1;
+        const loop = () => {
+          if (cancelled) return;
+          rafId = requestAnimationFrame(loop);
+          if (!video || video.readyState < 2 || video.currentTime === lastVideoTime) return;
+          lastVideoTime = video.currentTime;
+          handleResult(landmarker.detectForVideo(video, performance.now()));
+        };
+        reportStatus('no-hand');
+        rafId = requestAnimationFrame(loop);
+      } catch (err) {
+        console.error('手势控制初始化失败:', err);
+        reportStatus('error');
+      }
+    };
+
+    setup();
+
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(rafId);
+      stream?.getTracks().forEach(t => t.stop());
+      landmarker?.close();
+      if (video) video.srcObject = null;
+      sketchRef.current?.control?.externalUp();
+      lastStatus = '';
+      setGestureStatus('off');
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gestureOn]);
+
   const togglePlay = () => {
     const audio = audioRef.current;
     if (!audio) return;
@@ -1183,6 +1390,31 @@ export default function InfiniteMenu({ items = [], scale = 1.0, audioSrc, lrcSrc
             <div className="progress-fill" style={{ width: `${duration ? (currentTime / duration) * 100 : 0}%` }} />
           </div>
           <span className="progress-time">{formatTime(duration)}</span>
+        </div>
+      )}
+
+      <button
+        type="button"
+        className={`gesture-toggle${gestureOn ? ' on' : ''}`}
+        onClick={() => setGestureOn(v => !v)}
+      >
+        {gestureOn ? '关闭手势' : '手势控制'}
+      </button>
+
+      {gestureOn && (
+        <div className="gesture-preview">
+          <video ref={videoRef} autoPlay playsInline muted />
+          <span className={`gesture-status ${gestureStatus}`}>
+            {
+              {
+                loading: '模型加载中…',
+                'no-hand': '请露出手掌',
+                open: '张手 · 握拳抓取',
+                fist: '抓取中 · 张手播放',
+                error: '初始化失败'
+              }[gestureStatus] || '准备中…'
+            }
+          </span>
         </div>
       )}
     </div>
