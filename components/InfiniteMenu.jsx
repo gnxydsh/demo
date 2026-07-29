@@ -606,11 +606,13 @@ class ArcballControl {
       quat.slerp(this.pointerRotation, this.pointerRotation, this.IDENTITY_QUAT, INTENSITY);
 
       if (this.snapTargetDirection) {
-        const SNAPPING_INTENSITY = 0.2;
+        // 吸附强度：值越大唱片旋转到位越快
+        const SNAPPING_INTENSITY = 0.5;
         const a = this.snapTargetDirection;
         const b = this.snapDirection;
         const sqrDist = vec3.squaredDistance(a, b);
-        const distanceFactor = Math.max(0.1, 1 - sqrDist * 10);
+        // 提高下限，避免距离远时起步过慢
+        const distanceFactor = Math.max(0.35, 1 - sqrDist * 10);
         angleFactor *= SNAPPING_INTENSITY * distanceFactor;
         this.quatFromVectors(a, b, snapRotation, angleFactor);
       }
@@ -702,6 +704,8 @@ class InfiniteGridMenu {
   activeDiscIndex = -1;
   spinAngle = 0;
   spinning = false;
+  // 手动选曲时的目标顶点；>=0 表示正在吸附旋转，期间抑制 onActiveItemChange
+  #manualSnapVertex = -1;
 
   constructor(canvas, items, onActiveItemChange, onMovementChange, onInit = null, scale = 1.0) {
     this.canvas = canvas;
@@ -982,13 +986,28 @@ class InfiniteGridMenu {
     }
 
     if (!this.control.isPointerDown) {
-      const nearestVertexIndex = this.#findNearestVertexIndex();
-      this.activeDiscIndex = nearestVertexIndex;
-      const itemIndex = nearestVertexIndex % Math.max(1, this.items.length);
-      this.onActiveItemChange(itemIndex);
-      const snapDirection = vec3.normalize(vec3.create(), this.#getVertexWorldPosition(nearestVertexIndex));
-      this.control.snapTargetDirection = snapDirection;
+      if (this.#manualSnapVertex >= 0) {
+        // 手动选曲吸附：旋转到目标唱片，期间不触发 onActiveItemChange
+        this.activeDiscIndex = this.#manualSnapVertex;
+        const snapDirection = vec3.normalize(vec3.create(), this.#getVertexWorldPosition(this.#manualSnapVertex));
+        this.control.snapTargetDirection = snapDirection;
+        // 接近目标后结束手动吸附，恢复正常吸附并触发一次激活变更
+        if (vec3.dot(snapDirection, this.control.snapDirection) > 0.99) {
+          const itemIndex = this.#manualSnapVertex % Math.max(1, this.items.length);
+          this.onActiveItemChange(itemIndex);
+          this.#manualSnapVertex = -1;
+        }
+      } else {
+        const nearestVertexIndex = this.#findNearestVertexIndex();
+        this.activeDiscIndex = nearestVertexIndex;
+        const itemIndex = nearestVertexIndex % Math.max(1, this.items.length);
+        this.onActiveItemChange(itemIndex);
+        const snapDirection = vec3.normalize(vec3.create(), this.#getVertexWorldPosition(nearestVertexIndex));
+        this.control.snapTargetDirection = snapDirection;
+      }
     } else {
+      // 用户开始拖动时取消手动吸附
+      this.#manualSnapVertex = -1;
       cameraTargetZ += this.control.rotationVelocity * 80 + 2.5;
       damping = 7 / timeScale;
     }
@@ -1017,6 +1036,26 @@ class InfiniteGridMenu {
   #getVertexWorldPosition(index) {
     const nearestVertexPos = this.instancePositions[index];
     return vec3.transformQuat(vec3.create(), nearestVertexPos, this.control.orientation);
+  }
+
+  /** 旋转球体使映射到 itemIndex 的唱片朝向相机 */
+  snapToItem(itemIndex) {
+    const count = Math.max(1, this.items.length);
+    const n = this.control.snapDirection;
+    // 选当前最接近朝向相机的同 item 顶点，让旋转距离最短
+    let best = -1;
+    let bestD = -2;
+    for (let i = 0; i < this.instancePositions.length; ++i) {
+      if (i % count !== itemIndex) continue;
+      const wp = this.#getVertexWorldPosition(i);
+      const d = vec3.dot(vec3.normalize(vec3.create(), wp), n);
+      if (d > bestD) {
+        bestD = d;
+        best = i;
+      }
+    }
+    if (best < 0) return;
+    this.#manualSnapVertex = best;
   }
 }
 
@@ -1153,6 +1192,8 @@ export default function InfiniteMenu({ items = [], scale = 1.0, audioSrc, lrcSrc
   const progressTrackRef = useRef(null);
   const sketchRef = useRef(null);
   const videoRef = useRef(null);
+  // 记录上一次球体吸附到的唱片下标，避免每帧重复触发 setPlaylistIndex(null) 覆盖手动选曲
+  const lastActiveIndexRef = useRef(-1);
   const [gestureOn, setGestureOn] = useState(false);
   const [gestureStatus, setGestureStatus] = useState('off');
   // 播放列表手动选曲索引；为 null 时跟随球体激活唱片
@@ -1180,6 +1221,9 @@ export default function InfiniteMenu({ items = [], scale = 1.0, audioSrc, lrcSrc
 
     const handleActiveItem = index => {
       const itemIndex = index % items.length;
+      // 仅当吸附到的唱片真正变化时才更新，否则每帧都会把手动选曲覆盖为 null
+      if (itemIndex === lastActiveIndexRef.current) return;
+      lastActiveIndexRef.current = itemIndex;
       setActiveItem(items[itemIndex]);
       // 球体转动切换激活唱片时，取消手动选曲，恢复跟随球体
       setPlaylistIndex(null);
@@ -1538,16 +1582,25 @@ export default function InfiniteMenu({ items = [], scale = 1.0, audioSrc, lrcSrc
   // 切歌：dir 为 1 下一曲 / -1 上一曲；随机模式下自动随机挑选
   const advanceTrack = dir => {
     if (!playlist.length) return;
-    setPlaylistIndex(prev => {
-      const base = prev != null ? prev : currentPlaylistIndex();
-      if (playModeRef.current === 'shuffle' && dir === 1) {
-        if (playlist.length === 1) return base;
-        let next = base;
-        while (next === base) next = Math.floor(Math.random() * playlist.length);
-        return next;
-      }
-      return (base + dir + playlist.length) % playlist.length;
-    });
+    const base = playlistIndex != null ? playlistIndex : currentPlaylistIndex();
+    let next;
+    if (playModeRef.current === 'shuffle' && dir === 1) {
+      if (playlist.length === 1) return;
+      do {
+        next = Math.floor(Math.random() * playlist.length);
+      } while (next === base);
+    } else {
+      next = (base + dir + playlist.length) % playlist.length;
+    }
+    setPlaylistIndex(next);
+    const songItem = playlist[next];
+    // 立即更新标题/歌手/封面色调，与音频歌词同步切换
+    setActiveItem(songItem);
+    // 重置吸附去重，让旋转到位后能正常触发 handleActiveItem
+    lastActiveIndexRef.current = -1;
+    // 旋转球体到对应唱片，让 3D 唱片也切换
+    const itemsIndex = items.indexOf(songItem);
+    if (itemsIndex >= 0) sketchRef.current?.snapToItem(itemsIndex);
     // 切歌后立即播放（currentAudio 变化时由副作用接管播放）
     isPlayingRef.current = true;
     setIsPlaying(true);
