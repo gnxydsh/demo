@@ -325,6 +325,8 @@
   z-index: 1;
   padding-right: 1.2rem;
   transition: transform 0.55s cubic-bezier(0.22, 1, 0.36, 1);
+  cursor: pointer;
+  touch-action: none;
 }
 
 .lyric-line {
@@ -338,6 +340,7 @@
   letter-spacing: 0.025em;
   /* 长句自动换行，不再单行截断 */
   white-space: normal;
+  user-select: none;
   color: rgba(255, 255, 255, 0.2);
   transition:
     color 0.35s ease,
