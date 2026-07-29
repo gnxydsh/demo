@@ -74,8 +74,13 @@
   position: absolute;
   top: 50%;
   right: 2.5%;
-  /* 固定占据右侧区域，宽度受限不再向左溢出到圆盘 */
-  width: min(34rem, 38vw);
+  /*
+    宽度上限 34rem（可读性），且左边界不得越过中央圆形唱片：
+    唱片右边缘约在 50% + 35vh 处，留 3vh 间隙后用 38vh 作为禁区。
+    可用宽度 = 视口右半部分(50vw) - 右侧留白(2.5vw) - 唱片禁区(38vh)，
+    超出该宽度的长句由 .lyric-line 的 white-space:normal 自动换行多行显示。
+  */
+  width: min(34rem, calc(50vw - 2.5vw - 38vh));
   height: 16rem;
   overflow: hidden;
   text-align: right;
@@ -106,11 +111,7 @@
   /* 长句自动换行，不再单行截断 */
   white-space: normal;
   color: rgba(255, 255, 255, 0.32);
-  /* 放大用 transform，不改变布局高度，保证滚动定位稳定 */
-  transform-origin: right center;
-  transition:
-    transform 0.35s ease,
-    color 0.35s ease;
+  transition: color 0.35s ease;
 }
 
 .lyric-line.near {
@@ -118,7 +119,6 @@
 }
 
 .lyric-line.current {
-  transform: scale(1.28);
   font-weight: 700;
   color: #ffffff;
   text-shadow: 0 2px 20px rgba(0, 0, 0, 0.7);
