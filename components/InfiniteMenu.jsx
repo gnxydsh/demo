@@ -1060,6 +1060,8 @@ function parseLrc(lrcText) {
  * @property {string} image
  * @property {string} [title]
  * @property {string} [artist]
+ * @property {string} [audio]
+ * @property {string} [lrc]
  */
 
 /**
@@ -1089,6 +1091,12 @@ export default function InfiniteMenu({ items = [], scale = 1.0, audioSrc, lrcSrc
   const videoRef = useRef(null);
   const [gestureOn, setGestureOn] = useState(false);
   const [gestureStatus, setGestureStatus] = useState('off');
+
+  // 当前歌曲：优先取激活唱片自带的 audio/lrc，兼容组件级 audioSrc/lrcSrc
+  const song = activeItem && activeItem.audio ? activeItem : audioSrc ? { audio: audioSrc, lrc: lrcSrc } : null;
+  const currentAudio = song?.audio || null;
+  const currentLrc = song?.lrc || null;
+  const isPlayingRef = useRef(false);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -1127,15 +1135,33 @@ export default function InfiniteMenu({ items = [], scale = 1.0, audioSrc, lrcSrc
 
   // 播放/暂停时同步唱片自转状态
   useEffect(() => {
+    isPlayingRef.current = isPlaying;
     if (sketchRef.current) {
       sketchRef.current.spinning = isPlaying;
     }
   }, [isPlaying]);
 
+  // 切换歌曲：暂停时仅换源，播放中换源后继续播放新歌
   useEffect(() => {
-    if (!lrcSrc) return;
+    const audio = audioRef.current;
+    if (!audio || !currentAudio) return;
+    setCurrentTime(0);
+    setDuration(0);
+    setActiveLyricIndex(0);
+    if (isPlayingRef.current) {
+      audio
+        .play()
+        .then(() => setIsPlaying(true))
+        .catch(() => setIsPlaying(false));
+    }
+  }, [currentAudio]);
+
+  useEffect(() => {
+    lyricsRef.current = [];
+    setLyrics([]);
+    if (!currentLrc) return;
     let cancelled = false;
-    fetch(lrcSrc)
+    fetch(currentLrc)
       .then(res => res.text())
       .then(text => {
         if (!cancelled) {
@@ -1148,7 +1174,7 @@ export default function InfiniteMenu({ items = [], scale = 1.0, audioSrc, lrcSrc
     return () => {
       cancelled = true;
     };
-  }, [lrcSrc]);
+  }, [currentLrc]);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -1428,7 +1454,7 @@ export default function InfiniteMenu({ items = [], scale = 1.0, audioSrc, lrcSrc
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
       <canvas id="infinite-grid-menu-canvas" ref={canvasRef} />
 
-      {audioSrc && <audio ref={audioRef} src={audioSrc} preload="auto" />}
+      <audio ref={audioRef} src={currentAudio || undefined} preload="auto" />
 
       {activeItem && (
         <>
@@ -1459,7 +1485,7 @@ export default function InfiniteMenu({ items = [], scale = 1.0, audioSrc, lrcSrc
         </div>
       )}
 
-      {audioSrc && (
+      {currentAudio && (
         <div className={`progress-bar ${isMoving ? 'inactive' : 'active'}`}>
           <button
             type="button"
