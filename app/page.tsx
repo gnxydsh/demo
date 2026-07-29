@@ -44,6 +44,7 @@ const items = [
 
 export default function Home() {
   const [isPlaying, setIsPlaying] = useState(false);
+  const [hue, setHue] = useState(140);
 
   return (
     <div style={{ height: "100vh", position: "relative" }}>
@@ -57,6 +58,8 @@ export default function Home() {
       >
         <Galaxy
           disableAnimation={!isPlaying}
+          hueShift={hue}
+          saturation={0.7}
           mouseInteraction={false}
           mouseRepulsion={false}
           density={1.2}
@@ -66,7 +69,7 @@ export default function Home() {
         />
       </div>
       <div style={{ position: "relative", zIndex: 1, width: "100%", height: "100%" }}>
-        <InfiniteMenu items={items} onPlayingChange={setIsPlaying} />
+        <InfiniteMenu items={items} onPlayingChange={setIsPlaying} onColorChange={setHue} />
       </div>
     </div>
   );

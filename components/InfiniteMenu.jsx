@@ -1057,6 +1057,68 @@ function parseLrc(lrcText) {
   return entries.sort((a, b) => a.time - b.time);
 }
 
+function rgbToHsv(r, g, b) {
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const d = max - min;
+  let h = 0;
+  if (d !== 0) {
+    if (max === r) h = ((g - b) / d) % 6;
+    else if (max === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    h *= 60;
+    if (h < 0) h += 360;
+  }
+  const s = max === 0 ? 0 : d / max;
+  return [h, s, max];
+}
+
+/**
+ * 提取图片主色调（hue，0-360）。忽略低饱和、过暗、过亮的像素，
+ * 其余按 饱和度×亮度 加权统计色相直方图，取权重最大的色相区间中心值。
+ * @param {string} imageSrc
+ * @returns {Promise<number|null>}
+ */
+function extractDominantHue(imageSrc) {
+  return new Promise(resolve => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      try {
+        const size = 48;
+        const canvas = document.createElement('canvas');
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, size, size);
+        const { data } = ctx.getImageData(0, 0, size, size);
+        const bins = 36;
+        const histogram = new Array(bins).fill(0);
+        let total = 0;
+        for (let i = 0; i < data.length; i += 4) {
+          const [h, s, v] = rgbToHsv(data[i] / 255, data[i + 1] / 255, data[i + 2] / 255);
+          if (v < 0.15 || v > 0.95 || s < 0.18) continue;
+          const bin = Math.min(bins - 1, Math.floor((h / 360) * bins));
+          const w = s * v;
+          histogram[bin] += w;
+          total += w;
+        }
+        if (!total) {
+          resolve(null);
+          return;
+        }
+        let maxBin = 0;
+        for (let i = 1; i < bins; i++) if (histogram[i] > histogram[maxBin]) maxBin = i;
+        resolve(((maxBin + 0.5) / bins) * 360);
+      } catch (e) {
+        resolve(null);
+      }
+    };
+    img.onerror = () => resolve(null);
+    img.src = imageSrc;
+  });
+}
+
 /**
  * @typedef {Object} InfiniteMenuItem
  * @property {string} image
@@ -1073,7 +1135,7 @@ function parseLrc(lrcText) {
  * @param {string} [props.audioSrc]
  * @param {string} [props.lrcSrc]
  */
-export default function InfiniteMenu({ items = [], scale = 1.0, audioSrc, lrcSrc, onPlayingChange }) {
+export default function InfiniteMenu({ items = [], scale = 1.0, audioSrc, lrcSrc, onPlayingChange, onColorChange }) {
   const canvasRef = useRef(null);
   const audioRef = useRef(null);
   const lyricsRef = useRef([]);
@@ -1162,6 +1224,18 @@ export default function InfiniteMenu({ items = [], scale = 1.0, audioSrc, lrcSrc
   useEffect(() => {
     playModeRef.current = playMode;
   }, [playMode]);
+
+  // 切换激活唱片时，提取封面主色调通知父组件，用于背景星空配色
+  useEffect(() => {
+    if (!activeItem?.image) return;
+    let cancelled = false;
+    extractDominantHue(activeItem.image).then(hue => {
+      if (!cancelled && hue != null) onColorChange?.(hue);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeItem, onColorChange]);
 
   // 切换歌曲：暂停时仅换源，播放中换源后继续播放新歌
   useEffect(() => {

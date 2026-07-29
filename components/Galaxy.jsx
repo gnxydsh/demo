@@ -103,9 +103,11 @@ vec3 StarLayer(vec2 uv) {
       float grn = min(red, blu) * seed;
       vec3 base = vec3(red, grn, blu);
       
-      float hue = atan(base.g - base.r, base.b - base.r) / (2.0 * 3.14159) + 0.5;
-      hue = fract(hue + uHueShift / 360.0);
-      float sat = length(base - vec3(dot(base, vec3(0.299, 0.587, 0.114)))) * uSaturation;
+      // 以 uHueShift 为中心色相，每颗星星在其附近小范围随机散布，
+      // 使整体颜色集中于目标色相（如唱片封面主色），而非全色相整体偏移
+      float starHueRand = Hash21(si + 7.0);
+      float hue = fract(uHueShift / 360.0 + (starHueRand - 0.5) * 0.15);
+      float sat = mix(0.4, 1.0, Hash21(si + 9.0)) * uSaturation;
       float val = max(max(base.r, base.g), base.b);
       base = hsv2rgb(vec3(hue, sat, val));
 
@@ -200,9 +202,13 @@ export default function Galaxy({
   const targetMouseActive = useRef(0.0);
   const smoothMouseActive = useRef(0.0);
   const disableAnimationRef = useRef(disableAnimation);
+  const hueShiftRef = useRef(hueShift);
+  const saturationRef = useRef(saturation);
   useEffect(() => {
     disableAnimationRef.current = disableAnimation;
-  }, [disableAnimation]);
+    hueShiftRef.current = hueShift;
+    saturationRef.current = saturation;
+  }, [disableAnimation, hueShift, saturation]);
 
   useEffect(() => {
     if (!ctnDom.current) return;
@@ -287,6 +293,16 @@ export default function Galaxy({
       program.uniforms.uMouse.value[1] = smoothMousePos.current.y;
       program.uniforms.uMouseActiveFactor.value = smoothMouseActive.current;
 
+      // 色相/饱和度平滑过渡：色相按环形最短路径插值，避免切歌时颜色跳变
+      const targetHue = hueShiftRef.current;
+      let curHue = program.uniforms.uHueShift.value;
+      let hueDiff = (((targetHue - curHue) % 360) + 540) % 360 - 180;
+      curHue = (curHue + hueDiff * 0.05 + 360) % 360;
+      program.uniforms.uHueShift.value = curHue;
+
+      const curSat = program.uniforms.uSaturation.value;
+      program.uniforms.uSaturation.value = curSat + (saturationRef.current - curSat) * 0.05;
+
       renderer.render({ scene: mesh });
     }
     animateId = requestAnimationFrame(update);
@@ -324,11 +340,9 @@ export default function Galaxy({
     rotation,
     starSpeed,
     density,
-    hueShift,
     speed,
     mouseInteraction,
     glowIntensity,
-    saturation,
     mouseRepulsion,
     twinkleIntensity,
     rotationSpeed,
