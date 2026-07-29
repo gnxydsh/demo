@@ -1,7 +1,7 @@
 /* Note: this CSS is only an example, you can overlay whatever you want using the activeItem logic */
 
+/* 光标由组件 JS 根据是否位于中央圆形区域动态控制 */
 #infinite-grid-menu-canvas {
-  cursor: grab;
   width: 100%;
   height: 100%;
   overflow: hidden;
@@ -9,109 +9,420 @@
   outline: none;
 }
 
-#infinite-grid-menu-canvas:active {
-  cursor: grabbing;
-}
-
-.action-button {
-  position: absolute;
-  left: 50%;
-  z-index: 10;
-  width: 60px;
-  height: 60px;
-  display: grid;
-  place-items: center;
-  background: #5227ff;
-  border: none;
-  border-radius: 50%;
-  cursor: pointer;
-  border: 5px solid #000;
-}
+/* ---------- 左侧：歌曲信息 ---------- */
 
 .face-title {
   user-select: none;
   position: absolute;
-  font-weight: 900;
-  font-size: 3rem;
-  left: 1.6em;
   top: 50%;
-}
-
-.action-button-icon {
-  user-select: none;
-  position: relative;
-  color: #fff;
-  top: 2px;
-  font-size: 26px;
-}
-
-.face-title {
-  position: absolute;
-  top: 50%;
-  transform: translate(20%, -50%);
+  left: 8%;
+  margin: 0;
+  font-size: clamp(2.5rem, 5vw, 4rem);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: #ffffff;
+  text-shadow: 0 2px 30px rgba(0, 0, 0, 0.7);
+  transform: translate(-8%, -115%);
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 0.15s ease,
+    transform 0.15s ease;
 }
 
 .face-title.active {
   opacity: 1;
-  transform: translate(20%, -50%);
+  transform: translate(0, -115%);
   pointer-events: auto;
-  transition: 0.5s ease;
+  transition:
+    opacity 0.5s ease,
+    transform 0.5s ease;
 }
 
-.face-title.inactive {
-  pointer-events: none;
-  opacity: 0;
-  transition: 0.1s ease;
-}
-
-.face-description {
+.face-artist {
   user-select: none;
   position: absolute;
-  max-width: 10ch;
   top: 50%;
-  font-size: 1.2rem;
-  right: 1%;
-  transform: translate(0, -50%);
-}
-
-.face-description.active {
-  opacity: 1;
-  transform: translate(-90%, -50%);
-  pointer-events: auto;
-  transition: 0.5s ease;
-}
-
-.face-description.inactive {
-  pointer-events: none;
-  transform: translate(-60%, -50%);
+  left: 8%;
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 500;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.55);
+  transform: translate(-8%, 0.4em);
   opacity: 0;
-  transition: 0.1s ease;
+  pointer-events: none;
+  transition:
+    opacity 0.15s ease,
+    transform 0.15s ease;
 }
 
-.action-button {
+.face-artist.active {
+  opacity: 1;
+  transform: translate(0, 0.4em);
+  pointer-events: auto;
+  transition:
+    opacity 0.5s ease 0.08s,
+    transform 0.5s ease 0.08s;
+}
+
+/* ---------- 右侧：歌词面板（多句滚动，当前句高亮） ---------- */
+
+.lyrics-panel {
+  user-select: none;
+  position: absolute;
+  top: 50%;
+  right: 2.5%;
+  /*
+    宽度上限 34rem（可读性），且左边界不得越过中央圆形唱片：
+    唱片右边缘约在 50% + 35vh 处，留 3vh 间隙后用 38vh 作为禁区。
+    可用宽度 = 视口右半部分(50vw) - 右侧留白(2.5vw) - 唱片禁区(38vh)，
+    超出该宽度的长句由 .lyric-line 的 white-space:normal 自动换行多行显示。
+  */
+  width: min(34rem, calc(50vw - 2.5vw - 38vh));
+  height: 16rem;
+  overflow: hidden;
+  text-align: right;
+  transform: translateY(-50%);
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 22%, #000 78%, transparent);
+  mask-image: linear-gradient(to bottom, transparent, #000 22%, #000 78%, transparent);
+  opacity: 1;
+  transition: opacity 0.5s ease;
+}
+
+.lyrics-panel.inactive {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+
+.lyrics-track {
+  transition: transform 0.45s ease;
+}
+
+.lyric-line {
+  margin: 0;
+  padding: 0.35rem 0;
+  font-size: 1.05rem;
+  font-weight: 500;
+  line-height: 1.45;
+  letter-spacing: 0.02em;
+  /* 长句自动换行，不再单行截断 */
+  white-space: normal;
+  color: rgba(255, 255, 255, 0.32);
+  transition: color 0.35s ease;
+}
+
+.lyric-line.near {
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.lyric-line.current {
+  font-weight: 700;
+  color: #ffffff;
+  text-shadow: 0 2px 20px rgba(0, 0, 0, 0.7);
+}
+
+/* ---------- 底部：播放器（控制按钮行 + 进度条行） ---------- */
+
+.player-bar {
   position: absolute;
   left: 50%;
-}
-
-.action-button.active {
-  bottom: 3.8em;
-  transform: translateX(-50%) scale(1);
+  bottom: 1.2rem;
+  transform: translateX(-50%);
+  width: min(42rem, 60vw);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.55rem;
+  z-index: 10;
   opacity: 1;
-  pointer-events: auto;
-  transition: 0.5s ease;
+  transition:
+    opacity 0.5s ease,
+    transform 0.5s ease;
 }
 
-.action-button.inactive {
-  bottom: -80px;
-  transform: translateX(-50%) scale(0);
+.player-bar.inactive {
   opacity: 0;
   pointer-events: none;
-  transition: 0.1s ease;
+  transform: translateX(-50%) translateY(12px);
+  transition:
+    opacity 0.15s ease,
+    transform 0.15s ease;
+}
+
+/* 控制按钮行：播放模式 / 上一曲 / 播放 / 下一曲 / 音量 */
+.player-controls {
+  display: flex;
+  align-items: center;
+  gap: 1.4rem;
+}
+
+.player-icon-button {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.6);
+  cursor: pointer;
+  transition:
+    color 0.2s ease,
+    transform 0.2s ease;
+}
+
+.player-icon-button svg {
+  width: 20px;
+  height: 20px;
+  fill: currentColor;
+}
+
+.player-icon-button:hover {
+  color: #ffffff;
+  transform: scale(1.12);
+}
+
+.player-icon-button:active {
+  transform: scale(0.94);
+}
+
+/* 单曲循环 / 随机播放激活态常亮 */
+.player-icon-button.on {
+  color: #ffffff;
+}
+
+.player-play-button {
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: #ffffff;
+  cursor: pointer;
+  transition: transform 0.2s ease;
+}
+
+.player-play-button svg {
+  width: 26px;
+  height: 26px;
+  fill: currentColor;
+}
+
+/* 播放三角视觉重心偏左，微调居中 */
+.player-play-button svg.play-icon {
+  transform: translateX(2px);
+}
+
+.player-play-button:hover {
+  transform: scale(1.08);
+}
+
+.player-play-button:active {
+  transform: scale(0.94);
+}
+
+/* 音量：悬停时展开滑杆 */
+.volume-control {
+  display: flex;
+  align-items: center;
+}
+
+.volume-slider {
+  width: 0;
+  opacity: 0;
+  margin-left: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  height: 3px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.35);
+  outline: none;
+  cursor: pointer;
+  transition:
+    width 0.25s ease,
+    opacity 0.25s ease,
+    margin-left 0.25s ease;
+}
+
+.volume-control:hover .volume-slider,
+.volume-slider:focus-visible {
+  width: 72px;
+  opacity: 1;
+  margin-left: 0.5rem;
+}
+
+.volume-slider::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 0 8px rgba(255, 255, 255, 0.5);
+}
+
+.volume-slider::-moz-range-thumb {
+  width: 11px;
+  height: 11px;
+  border: none;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 0 8px rgba(255, 255, 255, 0.5);
+}
+
+/* 进度条行：时间在轨道两侧 */
+.player-progress {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+}
+
+.progress-time {
+  user-select: none;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  color: rgba(255, 255, 255, 0.5);
+  min-width: 2.6em;
+  text-align: center;
+}
+
+.progress-track {
+  position: relative;
+  flex: 1;
+  height: 14px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  touch-action: none;
+}
+
+.progress-rail,
+.progress-fill {
+  position: absolute;
+  left: 0;
+  height: 3px;
+  border-radius: 999px;
+  transition: height 0.15s ease;
+}
+
+.progress-rail {
+  right: 0;
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.progress-fill {
+  background: #ffffff;
+}
+
+.progress-fill::after {
+  content: '';
+  position: absolute;
+  right: -5px;
+  top: 50%;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 0 10px rgba(255, 255, 255, 0.6);
+  transform: translateY(-50%) scale(0);
+  transition: transform 0.15s ease;
+}
+
+.progress-track:hover .progress-rail,
+.progress-track:hover .progress-fill {
+  height: 5px;
+}
+
+.progress-track:hover .progress-fill::after {
+  transform: translateY(-50%) scale(1);
+}
+
+/* ---------- 手势控制 ---------- */
+
+.gesture-toggle {
+  position: absolute;
+  top: 1.2rem;
+  right: 1.2rem;
+  z-index: 20;
+  padding: 0.45rem 1rem;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.35);
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 0.8rem;
+  letter-spacing: 0.12em;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+  transition:
+    background 0.2s ease,
+    color 0.2s ease,
+    border-color 0.2s ease;
+}
+
+.gesture-toggle:hover {
+  background: rgba(255, 255, 255, 0.14);
+  color: #ffffff;
+}
+
+.gesture-toggle.on {
+  border-color: rgba(255, 255, 255, 0.65);
+  color: #ffffff;
+}
+
+.gesture-preview {
+  position: absolute;
+  right: 1.2rem;
+  bottom: 4.5rem;
+  z-index: 20;
+  width: 160px;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: #000000;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+}
+
+.gesture-preview video {
+  display: block;
+  width: 100%;
+  /* 镜像显示，与手在画面中的移动方向一致 */
+  transform: scaleX(-1);
+  opacity: 0.85;
+}
+
+.gesture-status {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 4px 0;
+  text-align: center;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: #ffffff;
+  background: rgba(0, 0, 0, 0.5);
+  transition: background 0.2s ease;
+}
+
+.gesture-status.fist {
+  background: rgba(30, 140, 80, 0.6);
+}
+
+.gesture-status.error {
+  background: rgba(180, 40, 40, 0.6);
 }
 
 @media (max-width: 1500px) {
   .face-title,
-  .face-description {
+  .face-artist,
+  .lyrics-panel {
     display: none;
   }
 }

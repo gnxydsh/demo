@@ -56,12 +56,16 @@ precision highp float;
 uniform sampler2D uTex;
 uniform int uItemCount;
 uniform int uAtlasSize;
+uniform int uActiveDisc;
+uniform float uSpinAngle;
 
 out vec4 outColor;
 
 in vec2 vUvs;
 in float vAlpha;
 flat in int vInstanceId;
+
+#define PI 3.141593
 
 void main() {
     int itemIndex = vInstanceId % uItemCount;
@@ -73,19 +77,80 @@ void main() {
 
     ivec2 texSize = textureSize(uTex, 0);
     float imageAspect = float(texSize.x) / float(texSize.y);
-    float containerAspect = 1.0;
-    
-    float scale = max(imageAspect / containerAspect, 
-                     containerAspect / imageAspect);
-    
-    vec2 st = vec2(vUvs.x, 1.0 - vUvs.y);
-    st = (st - 0.5) * scale + 0.5;
-    
-    st = clamp(st, 0.0, 1.0);
-    
-    st = st * cellSize + cellOffset;
-    
-    outColor = texture(uTex, st);
+    float scale = max(imageAspect, 1.0 / imageAspect);
+
+    // 以圆心为原点，r = 1 对应唱片边缘
+    vec2 pRaw = vUvs - 0.5;
+    vec2 p = pRaw;
+    // 正对镜头的唱片在播放时缓慢自转
+    if (vInstanceId == uActiveDisc) {
+        float c = cos(uSpinAngle);
+        float s = sin(uSpinAngle);
+        p = mat2(c, -s, s, c) * p;
+    }
+    float r = length(pRaw) * 2.0;
+    // 高光、印记等角度特征取自旋转后的坐标，随唱片一起转动
+    float angle = atan(p.y, p.x);
+
+    const float labelRadius = 0.42; // 中心标签（专辑封面）半径
+    const float holeRadius = 0.05;  // 中心轴孔半径
+
+    // 远处小唱片的细纹低于像素精度，逐步淡出防止闪烁
+    float ringFreq = 420.0;
+    float fw = fwidth(r) * ringFreq / (2.0 * PI);
+    float detailAA = 1.0 - smoothstep(0.25, 0.85, fw);
+    float aa = max(0.006, fwidth(r) * 1.5);
+
+    // ---------- 黑胶部分 ----------
+    vec3 vinyl = vec3(0.040, 0.040, 0.046);
+
+    // 同心音轨纹路（叠加轻微角向扰动，转动时盘面有流动的纹理感）
+    float grooves = 0.5 + 0.5 * sin(r * ringFreq + sin(angle * 3.0) * 1.2);
+    float grooveMask = smoothstep(labelRadius + 0.02, labelRadius + 0.10, r) * (1.0 - smoothstep(0.93, 0.99, r));
+    vinyl += vec3(grooves * 0.05 * grooveMask * detailAA);
+
+    // 分轨暗环
+    float bands = 0.0;
+    bands += 1.0 - smoothstep(0.004, 0.016, abs(r - 0.58));
+    bands += 1.0 - smoothstep(0.004, 0.016, abs(r - 0.72));
+    bands += 1.0 - smoothstep(0.004, 0.016, abs(r - 0.86));
+    vinyl *= 1.0 - 0.35 * bands * detailAA;
+
+    // 两道相对的扇形反光（烘焙在盘面上，随唱片一起转动）
+    float sheen = pow(max(cos(angle - 0.8), 0.0), 28.0) + pow(max(cos(angle - 0.8 + PI), 0.0), 28.0);
+    float sheenMask = smoothstep(labelRadius + 0.05, labelRadius + 0.20, r) * (1.0 - smoothstep(0.88, 0.98, r));
+    vinyl += vec3(0.55, 0.58, 0.65) * sheen * sheenMask * 0.16;
+
+    // 盘面上的一点微小印记，随自转绕圈，让黑胶的转动更直观
+    vec2 markPos = vec2(cos(2.2), sin(2.2)) * 0.44;
+    float mark = 1.0 - smoothstep(0.004, 0.010, length(p - markPos));
+    vinyl += vec3(0.18, 0.18, 0.19) * mark * detailAA;
+
+    // 外圈压暗 + 边缘一圈细亮线
+    vinyl *= 1.0 - 0.35 * smoothstep(0.95, 1.0, r);
+    vinyl += vec3(0.10) * (1.0 - smoothstep(0.0, 0.008, abs(r - 0.994))) * detailAA;
+
+    // ---------- 标签部分（专辑封面圆形裁剪进标签区） ----------
+    vec2 st = vec2(p.x + 0.5, 0.5 - p.y);
+    vec2 labelUv = (st - 0.5) / labelRadius + 0.5;
+    labelUv = (labelUv - 0.5) * scale + 0.5;
+    labelUv = clamp(labelUv, 0.0, 1.0);
+    labelUv = labelUv * cellSize + cellOffset;
+    vec3 label = texture(uTex, labelUv).rgb * 0.95;
+
+    // ---------- 合成 ----------
+    vec3 color = mix(vinyl, label, 1.0 - smoothstep(labelRadius - aa, labelRadius + aa, r));
+
+    // 标签外圈描边
+    float labelRim = (1.0 - smoothstep(0.0, 0.006, abs(r - labelRadius - 0.005))) * step(labelRadius, r);
+    color += vec3(0.12) * labelRim;
+
+    // 中心轴孔与孔边亮环
+    color = mix(color, vec3(0.015), 1.0 - smoothstep(holeRadius - aa, holeRadius + aa, r));
+    float holeRim = (1.0 - smoothstep(0.0, 0.005, abs(r - holeRadius - 0.004))) * step(holeRadius, r);
+    color += vec3(0.20) * holeRim;
+
+    outColor = vec4(color, 1.0);
     outColor.a *= vAlpha;
 }
 `;
@@ -452,23 +517,60 @@ class ArcballControl {
     this._combinedQuat = quat.create();
 
     canvas.addEventListener('pointerdown', e => {
+      // 只有中央圆形专辑图区域可以拖动，其他区域不响应
+      if (!this.#isInsideDragArea(e)) return;
       vec2.set(this.pointerPos, e.clientX, e.clientY);
       vec2.copy(this.previousPointerPos, this.pointerPos);
       this.isPointerDown = true;
+      canvas.style.cursor = 'grabbing';
     });
     canvas.addEventListener('pointerup', () => {
       this.isPointerDown = false;
+      canvas.style.cursor = 'default';
     });
     canvas.addEventListener('pointerleave', () => {
       this.isPointerDown = false;
+      canvas.style.cursor = 'default';
     });
     canvas.addEventListener('pointermove', e => {
       if (this.isPointerDown) {
         vec2.set(this.pointerPos, e.clientX, e.clientY);
+      } else {
+        canvas.style.cursor = this.#isInsideDragArea(e) ? 'grab' : 'default';
       }
     });
 
     canvas.style.touchAction = 'none';
+  }
+
+  /** 手势等外部指针：按下（clientX/clientY 坐标系） */
+  externalDown(x, y) {
+    vec2.set(this.pointerPos, x, y);
+    vec2.copy(this.previousPointerPos, this.pointerPos);
+    this.isPointerDown = true;
+  }
+
+  /** 手势等外部指针：移动 */
+  externalMove(x, y) {
+    if (this.isPointerDown) {
+      vec2.set(this.pointerPos, x, y);
+    }
+  }
+
+  /** 手势等外部指针：抬起释放 */
+  externalUp() {
+    this.isPointerDown = false;
+  }
+
+  /** 判断指针是否位于画布中央的圆形可拖动区域内 */
+  #isInsideDragArea(e) {
+    const rect = this.canvas.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    const radius = (Math.min(rect.width, rect.height) / 2) * 0.7;
+    const dx = e.clientX - cx;
+    const dy = e.clientY - cy;
+    return dx * dx + dy * dy <= radius * radius;
   }
 
   update(deltaTime, targetFrameDuration = 16) {
@@ -504,11 +606,13 @@ class ArcballControl {
       quat.slerp(this.pointerRotation, this.pointerRotation, this.IDENTITY_QUAT, INTENSITY);
 
       if (this.snapTargetDirection) {
-        const SNAPPING_INTENSITY = 0.2;
+        // 吸附强度：值越大唱片旋转到位越快
+        const SNAPPING_INTENSITY = 0.5;
         const a = this.snapTargetDirection;
         const b = this.snapDirection;
         const sqrDist = vec3.squaredDistance(a, b);
-        const distanceFactor = Math.max(0.1, 1 - sqrDist * 10);
+        // 提高下限，避免距离远时起步过慢
+        const distanceFactor = Math.max(0.35, 1 - sqrDist * 10);
         angleFactor *= SNAPPING_INTENSITY * distanceFactor;
         this.quatFromVectors(a, b, snapRotation, angleFactor);
       }
@@ -597,6 +701,11 @@ class InfiniteGridMenu {
   smoothRotationVelocity = 0;
   scaleFactor = 1.0;
   movementActive = false;
+  activeDiscIndex = -1;
+  spinAngle = 0;
+  spinning = false;
+  // 手动选曲时的目标顶点；>=0 表示正在吸附旋转，期间抑制 onActiveItemChange
+  #manualSnapVertex = -1;
 
   constructor(canvas, items, onActiveItemChange, onMovementChange, onInit = null, scale = 1.0) {
     this.canvas = canvas;
@@ -633,7 +742,7 @@ class InfiniteGridMenu {
   }
 
   #init(onInit) {
-    this.gl = this.canvas.getContext('webgl2', { antialias: true, alpha: false });
+    this.gl = this.canvas.getContext('webgl2', { antialias: true, alpha: true, premultipliedAlpha: false });
     const gl = this.gl;
     if (!gl) {
       throw new Error('No WebGL 2 context!');
@@ -662,7 +771,9 @@ class InfiniteGridMenu {
       uTex: gl.getUniformLocation(this.discProgram, 'uTex'),
       uFrames: gl.getUniformLocation(this.discProgram, 'uFrames'),
       uItemCount: gl.getUniformLocation(this.discProgram, 'uItemCount'),
-      uAtlasSize: gl.getUniformLocation(this.discProgram, 'uAtlasSize')
+      uAtlasSize: gl.getUniformLocation(this.discProgram, 'uAtlasSize'),
+      uActiveDisc: gl.getUniformLocation(this.discProgram, 'uActiveDisc'),
+      uSpinAngle: gl.getUniformLocation(this.discProgram, 'uSpinAngle')
     };
 
     this.discGeo = new DiscGeometry(56, 1);
@@ -761,6 +872,11 @@ class InfiniteGridMenu {
     const gl = this.gl;
     this.control.update(deltaTime, this.TARGET_FRAME_DURATION);
 
+    // 播放时唱片缓慢自转（约 16 秒一圈）
+    if (this.spinning) {
+      this.spinAngle = (this.spinAngle + (deltaTime / 1000) * 0.4) % (Math.PI * 2);
+    }
+
     let positions = this.instancePositions.map(p => vec3.transformQuat(vec3.create(), p, this.control.orientation));
     const scale = 0.25;
     const SCALE_INTENSITY = 0.6;
@@ -789,6 +905,8 @@ class InfiniteGridMenu {
 
     gl.enable(gl.CULL_FACE);
     gl.enable(gl.DEPTH_TEST);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
@@ -812,6 +930,8 @@ class InfiniteGridMenu {
 
     gl.uniform1i(this.discLocations.uItemCount, this.items.length);
     gl.uniform1i(this.discLocations.uAtlasSize, this.atlasSize);
+    gl.uniform1i(this.discLocations.uActiveDisc, this.activeDiscIndex);
+    gl.uniform1f(this.discLocations.uSpinAngle, this.spinAngle);
 
     gl.uniform1f(this.discLocations.uFrames, this.#frames);
     gl.uniform1f(this.discLocations.uScaleFactor, this.scaleFactor);
@@ -866,12 +986,28 @@ class InfiniteGridMenu {
     }
 
     if (!this.control.isPointerDown) {
-      const nearestVertexIndex = this.#findNearestVertexIndex();
-      const itemIndex = nearestVertexIndex % Math.max(1, this.items.length);
-      this.onActiveItemChange(itemIndex);
-      const snapDirection = vec3.normalize(vec3.create(), this.#getVertexWorldPosition(nearestVertexIndex));
-      this.control.snapTargetDirection = snapDirection;
+      if (this.#manualSnapVertex >= 0) {
+        // 手动选曲吸附：旋转到目标唱片，期间不触发 onActiveItemChange
+        this.activeDiscIndex = this.#manualSnapVertex;
+        const snapDirection = vec3.normalize(vec3.create(), this.#getVertexWorldPosition(this.#manualSnapVertex));
+        this.control.snapTargetDirection = snapDirection;
+        // 接近目标后结束手动吸附，恢复正常吸附并触发一次激活变更
+        if (vec3.dot(snapDirection, this.control.snapDirection) > 0.99) {
+          const itemIndex = this.#manualSnapVertex % Math.max(1, this.items.length);
+          this.onActiveItemChange(itemIndex);
+          this.#manualSnapVertex = -1;
+        }
+      } else {
+        const nearestVertexIndex = this.#findNearestVertexIndex();
+        this.activeDiscIndex = nearestVertexIndex;
+        const itemIndex = nearestVertexIndex % Math.max(1, this.items.length);
+        this.onActiveItemChange(itemIndex);
+        const snapDirection = vec3.normalize(vec3.create(), this.#getVertexWorldPosition(nearestVertexIndex));
+        this.control.snapTargetDirection = snapDirection;
+      }
     } else {
+      // 用户开始拖动时取消手动吸附
+      this.#manualSnapVertex = -1;
       cameraTargetZ += this.control.rotationVelocity * 80 + 2.5;
       damping = 7 / timeScale;
     }
@@ -901,34 +1037,188 @@ class InfiniteGridMenu {
     const nearestVertexPos = this.instancePositions[index];
     return vec3.transformQuat(vec3.create(), nearestVertexPos, this.control.orientation);
   }
+
+  /** 旋转球体使映射到 itemIndex 的唱片朝向相机 */
+  snapToItem(itemIndex) {
+    const count = Math.max(1, this.items.length);
+    const n = this.control.snapDirection;
+    // 选当前最接近朝向相机的同 item 顶点，让旋转距离最短
+    let best = -1;
+    let bestD = -2;
+    for (let i = 0; i < this.instancePositions.length; ++i) {
+      if (i % count !== itemIndex) continue;
+      const wp = this.#getVertexWorldPosition(i);
+      const d = vec3.dot(vec3.normalize(vec3.create(), wp), n);
+      if (d > bestD) {
+        bestD = d;
+        best = i;
+      }
+    }
+    if (best < 0) return;
+    this.#manualSnapVertex = best;
+  }
 }
 
 const defaultItems = [
   {
     image: 'https://picsum.photos/900/900?grayscale',
-    link: 'https://google.com/',
     title: '',
-    description: ''
+    artist: ''
   }
 ];
+
+/** 秒数格式化为 m:ss */
+function formatTime(sec) {
+  if (!Number.isFinite(sec) || sec < 0) return '0:00';
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+/**
+ * 解析 LRC 歌词文件，返回按时间排序的 [{ time, text }] 数组
+ * @param {string} lrcText
+ */
+function parseLrc(lrcText) {
+  const entries = [];
+  const tagRe = /\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?\]/g;
+  lrcText.split(/\r?\n/).forEach(line => {
+    const matches = [...line.matchAll(tagRe)];
+    if (!matches.length) return;
+    const text = line.replace(tagRe, '').trim();
+    matches.forEach(m => {
+      const minutes = parseInt(m[1], 10);
+      const seconds = parseInt(m[2], 10);
+      const ms = m[3] ? parseInt(m[3].padEnd(3, '0'), 10) : 0;
+      entries.push({ time: minutes * 60 + seconds + ms / 1000, text });
+    });
+  });
+  return entries.sort((a, b) => a.time - b.time);
+}
+
+function rgbToHsv(r, g, b) {
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const d = max - min;
+  let h = 0;
+  if (d !== 0) {
+    if (max === r) h = ((g - b) / d) % 6;
+    else if (max === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    h *= 60;
+    if (h < 0) h += 360;
+  }
+  const s = max === 0 ? 0 : d / max;
+  return [h, s, max];
+}
+
+/**
+ * 提取图片主色调（hue，0-360）。忽略低饱和、过暗、过亮的像素，
+ * 其余按 饱和度×亮度 加权统计色相直方图，取权重最大的色相区间中心值。
+ * @param {string} imageSrc
+ * @returns {Promise<number|null>}
+ */
+function extractDominantHue(imageSrc) {
+  return new Promise(resolve => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      try {
+        const size = 48;
+        const canvas = document.createElement('canvas');
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, size, size);
+        const { data } = ctx.getImageData(0, 0, size, size);
+        const bins = 36;
+        const histogram = new Array(bins).fill(0);
+        let total = 0;
+        for (let i = 0; i < data.length; i += 4) {
+          const [h, s, v] = rgbToHsv(data[i] / 255, data[i + 1] / 255, data[i + 2] / 255);
+          if (v < 0.15 || v > 0.95 || s < 0.18) continue;
+          const bin = Math.min(bins - 1, Math.floor((h / 360) * bins));
+          const w = s * v;
+          histogram[bin] += w;
+          total += w;
+        }
+        if (!total) {
+          resolve(null);
+          return;
+        }
+        let maxBin = 0;
+        for (let i = 1; i < bins; i++) if (histogram[i] > histogram[maxBin]) maxBin = i;
+        resolve(((maxBin + 0.5) / bins) * 360);
+      } catch (e) {
+        resolve(null);
+      }
+    };
+    img.onerror = () => resolve(null);
+    img.src = imageSrc;
+  });
+}
 
 /**
  * @typedef {Object} InfiniteMenuItem
  * @property {string} image
- * @property {string} [link]
  * @property {string} [title]
- * @property {string} [description]
+ * @property {string} [artist]
+ * @property {string} [audio]
+ * @property {string} [lrc]
  */
 
 /**
  * @param {Object} props
  * @param {InfiniteMenuItem[]} [props.items]
  * @param {number} [props.scale]
+ * @param {string} [props.audioSrc]
+ * @param {string} [props.lrcSrc]
  */
-export default function InfiniteMenu({ items = [], scale = 1.0 }) {
+export default function InfiniteMenu({ items = [], scale = 1.0, audioSrc, lrcSrc, onPlayingChange, onColorChange, onMovementChange }) {
   const canvasRef = useRef(null);
+  const audioRef = useRef(null);
+  const lyricsRef = useRef([]);
+  const lyricsPanelRef = useRef(null);
+  const lyricLineRefs = useRef([]);
   const [activeItem, setActiveItem] = useState(null);
   const [isMoving, setIsMoving] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [lyrics, setLyrics] = useState([]);
+  const [activeLyricIndex, setActiveLyricIndex] = useState(0);
+  const [lineHeights, setLineHeights] = useState([]);
+  const [panelHeight, setPanelHeight] = useState(0);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const progressTrackRef = useRef(null);
+  const sketchRef = useRef(null);
+  const videoRef = useRef(null);
+  // 记录上一次球体吸附到的唱片下标，避免每帧重复触发 setPlaylistIndex(null) 覆盖手动选曲
+  const lastActiveIndexRef = useRef(-1);
+  // 用 ref 持有最新的 onMovementChange，避免其变化导致 sketch 重建
+  const onMovementChangeRef = useRef(onMovementChange);
+  useEffect(() => {
+    onMovementChangeRef.current = onMovementChange;
+  });
+  const [gestureOn, setGestureOn] = useState(false);
+  const [gestureStatus, setGestureStatus] = useState('off');
+  // 播放列表手动选曲索引；为 null 时跟随球体激活唱片
+  const [playlistIndex, setPlaylistIndex] = useState(null);
+  // 播放模式：loop 列表循环 / one 单曲循环 / shuffle 随机播放
+  const [playMode, setPlayMode] = useState('loop');
+  const [volume, setVolume] = useState(0.8);
+  const lastVolumeRef = useRef(0.8);
+
+  // 播放列表：带音频的唱片项
+  const playlist = items.filter(it => it.audio);
+  // 当前歌曲：手动选曲优先，其次激活唱片自带的 audio/lrc，兼容组件级 audioSrc/lrcSrc
+  const followSong = activeItem && activeItem.audio ? activeItem : audioSrc ? { audio: audioSrc, lrc: lrcSrc } : null;
+  const song = playlistIndex != null && playlist.length ? playlist[playlistIndex] : followSong;
+  const currentAudio = song?.audio || null;
+  const currentLrc = song?.lrc || null;
+  const isPlayingRef = useRef(false);
+  const playModeRef = useRef(playMode);
+  // 保存最新切歌函数，供 audio ended 回调使用
+  const advanceRef = useRef(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -936,7 +1226,18 @@ export default function InfiniteMenu({ items = [], scale = 1.0 }) {
 
     const handleActiveItem = index => {
       const itemIndex = index % items.length;
+      // 仅当吸附到的唱片真正变化时才更新，否则每帧都会把手动选曲覆盖为 null
+      if (itemIndex === lastActiveIndexRef.current) return;
+      lastActiveIndexRef.current = itemIndex;
       setActiveItem(items[itemIndex]);
+      // 球体转动切换激活唱片时，取消手动选曲，恢复跟随球体
+      setPlaylistIndex(null);
+    };
+
+    // 拖动状态变化时同时通知父组件（用于背景塌陷等效果）
+    const handleMovementChange = isMoving => {
+      setIsMoving(isMoving);
+      onMovementChangeRef.current?.(isMoving);
     };
 
     if (canvas) {
@@ -944,10 +1245,11 @@ export default function InfiniteMenu({ items = [], scale = 1.0 }) {
         canvas,
         items.length ? items : defaultItems,
         handleActiveItem,
-        setIsMoving,
+        handleMovementChange,
         sk => sk.run(),
         scale
       );
+      sketchRef.current = sketch;
     }
 
     const handleResize = () => {
@@ -964,29 +1266,561 @@ export default function InfiniteMenu({ items = [], scale = 1.0 }) {
     };
   }, [items, scale]);
 
-  const handleButtonClick = () => {
-    if (!activeItem?.link) return;
-    if (activeItem.link.startsWith('http')) {
-      window.open(activeItem.link, '_blank');
-    } else {
-      console.log('Internal route:', activeItem.link);
+  // 播放/暂停时同步唱片自转状态
+  useEffect(() => {
+    isPlayingRef.current = isPlaying;
+    if (sketchRef.current) {
+      sketchRef.current.spinning = isPlaying;
     }
+    onPlayingChange?.(isPlaying);
+  }, [isPlaying, onPlayingChange]);
+
+  // 播放模式同步到 ref，供 audio 事件回调读取最新值
+  useEffect(() => {
+    playModeRef.current = playMode;
+  }, [playMode]);
+
+  // 切换激活唱片时，提取封面主色调通知父组件，用于背景星空配色
+  useEffect(() => {
+    if (!activeItem?.image) return;
+    let cancelled = false;
+    extractDominantHue(activeItem.image).then(hue => {
+      if (!cancelled && hue != null) onColorChange?.(hue);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeItem, onColorChange]);
+
+  // 切换歌曲：暂停时仅换源，播放中换源后继续播放新歌
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio || !currentAudio) return;
+    setCurrentTime(0);
+    setDuration(0);
+    setActiveLyricIndex(0);
+    if (isPlayingRef.current) {
+      audio
+        .play()
+        .then(() => setIsPlaying(true))
+        .catch(() => setIsPlaying(false));
+    }
+  }, [currentAudio]);
+
+  useEffect(() => {
+    lyricsRef.current = [];
+    setLyrics([]);
+    if (!currentLrc) return;
+    let cancelled = false;
+    fetch(currentLrc)
+      .then(res => res.text())
+      .then(text => {
+        if (!cancelled) {
+          const parsed = parseLrc(text);
+          lyricsRef.current = parsed;
+          setLyrics(parsed);
+        }
+      })
+      .catch(err => console.error('Failed to load lyrics:', err));
+    return () => {
+      cancelled = true;
+    };
+  }, [currentLrc]);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    const handleTimeUpdate = () => {
+      const t = audio.currentTime;
+      setCurrentTime(t);
+      const list = lyricsRef.current;
+      let index = 0;
+      for (let i = 0; i < list.length; i++) {
+        if (list[i].time <= t) {
+          index = i;
+        } else {
+          break;
+        }
+      }
+      setActiveLyricIndex(prev => (prev === index ? prev : index));
+    };
+    const handleLoadedMetadata = () => setDuration(audio.duration || 0);
+    const handleEnded = () => {
+      if (playModeRef.current === 'one') {
+        audio.currentTime = 0;
+        audio.play().catch(() => setIsPlaying(false));
+        return;
+      }
+      advanceRef.current?.(1);
+    };
+
+    audio.addEventListener('timeupdate', handleTimeUpdate);
+    audio.addEventListener('loadedmetadata', handleLoadedMetadata);
+    audio.addEventListener('durationchange', handleLoadedMetadata);
+    audio.addEventListener('ended', handleEnded);
+
+    // 浏览器缓存可能导致元数据在挂载监听前已加载完成，此时立即同步一次
+    if (audio.readyState >= 1) {
+      handleLoadedMetadata();
+    }
+    setCurrentTime(audio.currentTime || 0);
+
+    return () => {
+      audio.removeEventListener('timeupdate', handleTimeUpdate);
+      audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
+      audio.removeEventListener('durationchange', handleLoadedMetadata);
+      audio.removeEventListener('ended', handleEnded);
+      audio.pause();
+    };
+  }, []);
+
+  // 歌词换行后每行高度不固定，渲染完成后实际测量各行与面板高度，窗口尺寸变化时重新测量
+  useEffect(() => {
+    if (!lyrics.length) return;
+
+    const measure = () => {
+      setLineHeights(lyrics.map((_, i) => lyricLineRefs.current[i]?.offsetHeight || 36));
+      setPanelHeight(lyricsPanelRef.current?.clientHeight || 0);
+    };
+
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, [lyrics]);
+
+  // 手势控制：握拳 = 抓取拖动，移动拳头 = 旋转球体，张手 = 释放并播放
+  useEffect(() => {
+    if (!gestureOn) return;
+
+    let cancelled = false;
+    let landmarker = null;
+    let stream = null;
+    let rafId = 0;
+    const video = videoRef.current;
+
+    const CONFIRM_FRAMES = 3; // 手势状态切换需连续确认的帧数，防抖
+    let grabbing = false;
+    let fistFrames = 0;
+    let openFrames = 0;
+    let smoothX = null;
+    let smoothY = null;
+    let lastStatus = '';
+
+    const reportStatus = s => {
+      if (s !== lastStatus) {
+        lastStatus = s;
+        setGestureStatus(s);
+      }
+    };
+
+    const dist3 = (a, b) => Math.hypot(a.x - b.x, a.y - b.y, (a.z || 0) - (b.z || 0));
+
+    // 依据 4 根手指（食/中/无名/小）指尖与指根到手腕的距离比判断握拳/张手
+    const classify = lm => {
+      const wrist = lm[0];
+      const fingers = [
+        [8, 6],
+        [12, 10],
+        [16, 14],
+        [20, 18]
+      ];
+      let curled = 0;
+      let extended = 0;
+      for (const [tip, pip] of fingers) {
+        const ratio = dist3(lm[tip], wrist) / (dist3(lm[pip], wrist) + 1e-6);
+        if (ratio < 1.05) curled++;
+        else if (ratio > 1.35) extended++;
+      }
+      if (curled >= 3) return 'fist';
+      if (extended >= 3) return 'open';
+      return 'unknown';
+    };
+
+    // 张手释放后：若未在播放则开始播放
+    const playAudio = () => {
+      const audio = audioRef.current;
+      if (audio && audio.paused) {
+        audio
+          .play()
+          .then(() => setIsPlaying(true))
+          .catch(() => {});
+      }
+    };
+
+    const handleResult = result => {
+      const control = sketchRef.current?.control;
+      const canvas = canvasRef.current;
+      const lm = result?.landmarks?.[0];
+
+      if (!lm) {
+        fistFrames = 0;
+        openFrames = 0;
+        if (grabbing) {
+          grabbing = false;
+          control?.externalUp();
+        }
+        reportStatus('no-hand');
+        return;
+      }
+
+      // 掌心位置：手腕 + 四指掌根平均，比单点更稳
+      let px = 0;
+      let py = 0;
+      for (const i of [0, 5, 9, 13, 17]) {
+        px += lm[i].x;
+        py += lm[i].y;
+      }
+      px /= 5;
+      py /= 5;
+
+      // 镜像映射到画布 client 坐标，并做指数平滑
+      const rect = canvas.getBoundingClientRect();
+      const cx = rect.left + (1 - px) * rect.width;
+      const cy = rect.top + py * rect.height;
+      smoothX = smoothX == null ? cx : smoothX + (cx - smoothX) * 0.45;
+      smoothY = smoothY == null ? cy : smoothY + (cy - smoothY) * 0.45;
+
+      const g = classify(lm);
+      if (g === 'fist') {
+        fistFrames++;
+        openFrames = 0;
+      } else if (g === 'open') {
+        openFrames++;
+        fistFrames = 0;
+      } else {
+        fistFrames = 0;
+        openFrames = 0;
+      }
+
+      if (!grabbing) {
+        if (fistFrames >= CONFIRM_FRAMES) {
+          grabbing = true;
+          fistFrames = 0;
+          control?.externalDown(smoothX, smoothY);
+          reportStatus('fist');
+        } else {
+          reportStatus('open');
+        }
+      } else {
+        control?.externalMove(smoothX, smoothY);
+        if (openFrames >= CONFIRM_FRAMES) {
+          grabbing = false;
+          openFrames = 0;
+          control?.externalUp();
+          reportStatus('open');
+          playAudio();
+        }
+      }
+    };
+
+    const setup = async () => {
+      try {
+        reportStatus('loading');
+        const { FilesetResolver, HandLandmarker } = await import('@mediapipe/tasks-vision');
+        const vision = await FilesetResolver.forVisionTasks('/vision_wasm');
+        const createOptions = delegate => ({
+          baseOptions: { modelAssetPath: '/models/hand_landmarker.task', delegate },
+          runningMode: 'VIDEO',
+          numHands: 1
+        });
+        try {
+          landmarker = await HandLandmarker.createFromOptions(vision, createOptions('GPU'));
+        } catch {
+          landmarker = await HandLandmarker.createFromOptions(vision, createOptions('CPU'));
+        }
+        if (cancelled) return;
+
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { width: 640, height: 480, facingMode: 'user' }
+        });
+        if (cancelled) {
+          stream.getTracks().forEach(t => t.stop());
+          return;
+        }
+        video.srcObject = stream;
+        await video.play();
+
+        let lastVideoTime = -1;
+        const loop = () => {
+          if (cancelled) return;
+          rafId = requestAnimationFrame(loop);
+          if (!video || video.readyState < 2 || video.currentTime === lastVideoTime) return;
+          lastVideoTime = video.currentTime;
+          handleResult(landmarker.detectForVideo(video, performance.now()));
+        };
+        reportStatus('no-hand');
+        rafId = requestAnimationFrame(loop);
+      } catch (err) {
+        console.error('手势控制初始化失败:', err);
+        reportStatus('error');
+      }
+    };
+
+    setup();
+
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(rafId);
+      stream?.getTracks().forEach(t => t.stop());
+      landmarker?.close();
+      if (video) video.srcObject = null;
+      sketchRef.current?.control?.externalUp();
+      lastStatus = '';
+      setGestureStatus('off');
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gestureOn]);
+
+  const togglePlay = () => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (audio.paused) {
+      audio.play();
+      setIsPlaying(true);
+    } else {
+      audio.pause();
+      setIsPlaying(false);
+    }
+  };
+
+  // 当前曲目在播放列表中的下标（跟随球体时按激活唱片匹配）
+  const currentPlaylistIndex = () => {
+    const idx = playlist.findIndex(p => p === followSong);
+    return idx >= 0 ? idx : 0;
+  };
+
+  // 切歌：dir 为 1 下一曲 / -1 上一曲；随机模式下自动随机挑选
+  const advanceTrack = dir => {
+    if (!playlist.length) return;
+    const base = playlistIndex != null ? playlistIndex : currentPlaylistIndex();
+    let next;
+    if (playModeRef.current === 'shuffle' && dir === 1) {
+      if (playlist.length === 1) return;
+      do {
+        next = Math.floor(Math.random() * playlist.length);
+      } while (next === base);
+    } else {
+      next = (base + dir + playlist.length) % playlist.length;
+    }
+    setPlaylistIndex(next);
+    const songItem = playlist[next];
+    // 立即更新标题/歌手/封面色调，与音频歌词同步切换
+    setActiveItem(songItem);
+    // 重置吸附去重，让旋转到位后能正常触发 handleActiveItem
+    lastActiveIndexRef.current = -1;
+    // 旋转球体到对应唱片，让 3D 唱片也切换
+    const itemsIndex = items.indexOf(songItem);
+    if (itemsIndex >= 0) sketchRef.current?.snapToItem(itemsIndex);
+    // 切歌后立即播放（currentAudio 变化时由副作用接管播放）
+    isPlayingRef.current = true;
+    setIsPlaying(true);
+  };
+
+  // 供 audio ended 回调拿到最新的切歌函数
+  useEffect(() => {
+    advanceRef.current = advanceTrack;
+  });
+
+  // 播放模式循环切换：列表循环 → 单曲循环 → 随机播放
+  const cyclePlayMode = () => {
+    setPlayMode(m => (m === 'loop' ? 'one' : m === 'one' ? 'shuffle' : 'loop'));
+  };
+
+  // 音量同步到 audio 元素
+  useEffect(() => {
+    if (audioRef.current) {
+      audioRef.current.volume = volume;
+    }
+  }, [volume]);
+
+  // 点击喇叭：静音 / 恢复之前音量
+  const toggleMute = () => {
+    if (volume > 0) {
+      lastVolumeRef.current = volume;
+      setVolume(0);
+    } else {
+      setVolume(lastVolumeRef.current > 0 ? lastVolumeRef.current : 0.8);
+    }
+  };
+
+  // 点击或拖动进度条跳转播放位置
+  const handleProgressPointerDown = e => {
+    const audio = audioRef.current;
+    const track = progressTrackRef.current;
+    const total = duration || audio?.duration || 0;
+    if (!audio || !track || !total) return;
+
+    const seekTo = clientX => {
+      const rect = track.getBoundingClientRect();
+      const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+      audio.currentTime = ratio * total;
+      setCurrentTime(audio.currentTime);
+    };
+
+    seekTo(e.clientX);
+    const handleMove = ev => seekTo(ev.clientX);
+    const handleUp = () => {
+      window.removeEventListener('pointermove', handleMove);
+      window.removeEventListener('pointerup', handleUp);
+    };
+    window.addEventListener('pointermove', handleMove);
+    window.addEventListener('pointerup', handleUp);
   };
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
       <canvas id="infinite-grid-menu-canvas" ref={canvasRef} />
 
+      <audio ref={audioRef} src={currentAudio || undefined} preload="auto" />
+
       {activeItem && (
         <>
           <h2 className={`face-title ${isMoving ? 'inactive' : 'active'}`}>{activeItem.title}</h2>
 
-          <p className={`face-description ${isMoving ? 'inactive' : 'active'}`}> {activeItem.description}</p>
-
-          <div onClick={handleButtonClick} className={`action-button ${isMoving ? 'inactive' : 'active'}`}>
-            <p className="action-button-icon">&#x2197;</p>
-          </div>
+          <p className={`face-artist ${isMoving ? 'inactive' : 'active'}`}>{activeItem.artist}</p>
         </>
+      )}
+
+      {lyrics.length > 0 && (
+        <div ref={lyricsPanelRef} className={`lyrics-panel ${isMoving ? 'inactive' : 'active'}`}>
+          <div
+            className="lyrics-track"
+            style={{
+              transform: `translateY(${(panelHeight / 2 - (lineHeights.slice(0, activeLyricIndex).reduce((sum, h) => sum + h, 0) + (lineHeights[activeLyricIndex] || 0) / 2)).toFixed(1)}px)`
+            }}
+          >
+            {lyrics.map((line, i) => (
+              <p
+                key={i}
+                ref={el => (lyricLineRefs.current[i] = el)}
+                className={`lyric-line${i === activeLyricIndex ? ' current' : Math.abs(i - activeLyricIndex) === 1 ? ' near' : ''}`}
+              >
+                {line.text || ' '}
+              </p>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {currentAudio && (
+        <div className={`player-bar ${isMoving ? 'inactive' : 'active'}`}>
+          <div className="player-controls">
+            <button
+              type="button"
+              className={`player-icon-button${playMode !== 'loop' ? ' on' : ''}`}
+              onClick={cyclePlayMode}
+              aria-label={{ loop: '列表循环', one: '单曲循环', shuffle: '随机播放' }[playMode]}
+              title={{ loop: '列表循环', one: '单曲循环', shuffle: '随机播放' }[playMode]}
+            >
+              {playMode === 'shuffle' ? (
+                <svg viewBox="0 0 24 24">
+                  <path d="M10.59 9.17 5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z" />
+                </svg>
+              ) : playMode === 'one' ? (
+                <svg viewBox="0 0 24 24">
+                  <path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4zm-4-2V9h-1l-2 1v1h1.5v4H13z" />
+                </svg>
+              ) : (
+                <svg viewBox="0 0 24 24">
+                  <path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z" />
+                </svg>
+              )}
+            </button>
+
+            <button type="button" className="player-icon-button" onClick={() => advanceTrack(-1)} aria-label="上一曲">
+              <svg viewBox="0 0 24 24">
+                <path d="M6 6h2v12H6zm3.5 6 8.5 6V6z" />
+              </svg>
+            </button>
+
+            <button
+              type="button"
+              className="player-play-button"
+              onClick={togglePlay}
+              aria-label={isPlaying ? '暂停' : '播放'}
+            >
+              {isPlaying ? (
+                <svg viewBox="0 0 24 24">
+                  <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
+                </svg>
+              ) : (
+                <svg viewBox="0 0 24 24" className="play-icon">
+                  <path d="M8 5v14l11-7z" />
+                </svg>
+              )}
+            </button>
+
+            <button type="button" className="player-icon-button" onClick={() => advanceTrack(1)} aria-label="下一曲">
+              <svg viewBox="0 0 24 24">
+                <path d="M6 18l8.5-6L6 6v12zM16 6h2v12h-2z" />
+              </svg>
+            </button>
+
+            <div className="volume-control">
+              <button
+                type="button"
+                className="player-icon-button"
+                onClick={toggleMute}
+                aria-label={volume === 0 ? '取消静音' : '静音'}
+              >
+                {volume === 0 ? (
+                  <svg viewBox="0 0 24 24">
+                    <path d="M16.5 12A4.5 4.5 0 0 0 14 7.97v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51A8.8 8.8 0 0 0 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3 3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06a8.99 8.99 0 0 0 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4 9.91 6.09 12 8.18V4z" />
+                  </svg>
+                ) : (
+                  <svg viewBox="0 0 24 24">
+                    <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3a4.5 4.5 0 0 0-2.5-4.03v8.05A4.5 4.5 0 0 0 16.5 12zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z" />
+                  </svg>
+                )}
+              </button>
+              <input
+                type="range"
+                className="volume-slider"
+                min="0"
+                max="1"
+                step="0.01"
+                value={volume}
+                onChange={e => setVolume(parseFloat(e.target.value))}
+                aria-label="音量"
+              />
+            </div>
+          </div>
+
+          <div className="player-progress">
+            <span className="progress-time">{formatTime(currentTime)}</span>
+            <div ref={progressTrackRef} className="progress-track" onPointerDown={handleProgressPointerDown}>
+              <div className="progress-rail" />
+              <div className="progress-fill" style={{ width: `${duration ? (currentTime / duration) * 100 : 0}%` }} />
+            </div>
+            <span className="progress-time">{formatTime(duration)}</span>
+          </div>
+        </div>
+      )}
+
+      <button
+        type="button"
+        className={`gesture-toggle${gestureOn ? ' on' : ''}`}
+        onClick={() => setGestureOn(v => !v)}
+      >
+        {gestureOn ? '关闭手势' : '手势控制'}
+      </button>
+
+      {gestureOn && (
+        <div className="gesture-preview">
+          <video ref={videoRef} autoPlay playsInline muted />
+          <span className={`gesture-status ${gestureStatus}`}>
+            {
+              {
+                loading: '模型加载中…',
+                'no-hand': '请露出手掌',
+                open: '张手 · 握拳抓取',
+                fist: '抓取中 · 张手播放',
+                error: '初始化失败'
+              }[gestureStatus] || '准备中…'
+            }
+          </span>
+        </div>
       )}
     </div>
   );
