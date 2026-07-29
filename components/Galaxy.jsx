@@ -37,6 +37,7 @@ uniform float uRepulsionStrength;
 uniform float uMouseActiveFactor;
 uniform float uAutoCenterRepulsion;
 uniform bool uTransparent;
+uniform float uRecede;
 
 varying vec2 vUv;
 
@@ -132,6 +133,9 @@ void main() {
   vec2 uv = (vUv * uResolution.xy - focalPx) / uResolution.y;
 
   vec2 mouseNorm = uMouse - vec2(0.5);
+
+  // 按压时背景往后缩（zoom out）：星空向中心收拢、变小
+  uv *= (1.0 + uRecede * 0.7);
   
   if (uAutoCenterRepulsion > 0.0) {
     vec2 centerUV = vec2(0.0, 0.0);
@@ -162,6 +166,9 @@ void main() {
     float fade = depth * smoothstep(1.0, 0.9, depth);
     col += StarLayer(uv * scale + i * 453.32) * fade;
   }
+
+  // 按压塌陷时整体压暗，强化"往后缩"的纵深感
+  col *= (1.0 - uRecede * 0.35);
 
   if (uTransparent) {
     float alpha = length(col);
@@ -194,6 +201,7 @@ export default function Galaxy({
   rotationSpeed = 0.1,
   autoCenterRepulsion = 0,
   transparent = true,
+  recede = 0,
   ...rest
 }) {
   const ctnDom = useRef(null);
@@ -204,11 +212,13 @@ export default function Galaxy({
   const disableAnimationRef = useRef(disableAnimation);
   const hueShiftRef = useRef(hueShift);
   const saturationRef = useRef(saturation);
+  const recedeRef = useRef(recede);
   useEffect(() => {
     disableAnimationRef.current = disableAnimation;
     hueShiftRef.current = hueShift;
     saturationRef.current = saturation;
-  }, [disableAnimation, hueShift, saturation]);
+    recedeRef.current = recede;
+  }, [disableAnimation, hueShift, saturation, recede]);
 
   useEffect(() => {
     if (!ctnDom.current) return;
@@ -269,7 +279,8 @@ export default function Galaxy({
         uRepulsionStrength: { value: repulsionStrength },
         uMouseActiveFactor: { value: 0.0 },
         uAutoCenterRepulsion: { value: autoCenterRepulsion },
-        uTransparent: { value: transparent }
+        uTransparent: { value: transparent },
+        uRecede: { value: recede }
       }
     });
 
@@ -302,6 +313,12 @@ export default function Galaxy({
 
       const curSat = program.uniforms.uSaturation.value;
       program.uniforms.uSaturation.value = curSat + (saturationRef.current - curSat) * 0.05;
+
+      // 往后缩效果平滑过渡，按压时迅速塌陷、松开后缓缓恢复
+      const curRecede = program.uniforms.uRecede.value;
+      const targetRecede = recedeRef.current;
+      const recedeLerp = targetRecede > curRecede ? 0.12 : 0.04;
+      program.uniforms.uRecede.value = curRecede + (targetRecede - curRecede) * recedeLerp;
 
       renderer.render({ scene: mesh });
     }

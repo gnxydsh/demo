@@ -45,6 +45,7 @@ const items = [
 export default function Home() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [hue, setHue] = useState(140);
+  const [pressed, setPressed] = useState(false);
 
   return (
     <div style={{ height: "100vh", position: "relative" }}>
@@ -66,10 +67,11 @@ export default function Home() {
           glowIntensity={0.4}
           twinkleIntensity={0.4}
           rotationSpeed={0.05}
+          recede={pressed ? 1 : 0}
         />
       </div>
       <div style={{ position: "relative", zIndex: 1, width: "100%", height: "100%" }}>
-        <InfiniteMenu items={items} onPlayingChange={setIsPlaying} onColorChange={setHue} />
+        <InfiniteMenu items={items} onPlayingChange={setIsPlaying} onColorChange={setHue} onMovementChange={setPressed} />
       </div>
     </div>
   );

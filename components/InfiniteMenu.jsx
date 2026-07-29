@@ -1174,7 +1174,7 @@ function extractDominantHue(imageSrc) {
  * @param {string} [props.audioSrc]
  * @param {string} [props.lrcSrc]
  */
-export default function InfiniteMenu({ items = [], scale = 1.0, audioSrc, lrcSrc, onPlayingChange, onColorChange }) {
+export default function InfiniteMenu({ items = [], scale = 1.0, audioSrc, lrcSrc, onPlayingChange, onColorChange, onMovementChange }) {
   const canvasRef = useRef(null);
   const audioRef = useRef(null);
   const lyricsRef = useRef([]);
@@ -1194,6 +1194,11 @@ export default function InfiniteMenu({ items = [], scale = 1.0, audioSrc, lrcSrc
   const videoRef = useRef(null);
   // 记录上一次球体吸附到的唱片下标，避免每帧重复触发 setPlaylistIndex(null) 覆盖手动选曲
   const lastActiveIndexRef = useRef(-1);
+  // 用 ref 持有最新的 onMovementChange，避免其变化导致 sketch 重建
+  const onMovementChangeRef = useRef(onMovementChange);
+  useEffect(() => {
+    onMovementChangeRef.current = onMovementChange;
+  });
   const [gestureOn, setGestureOn] = useState(false);
   const [gestureStatus, setGestureStatus] = useState('off');
   // 播放列表手动选曲索引；为 null 时跟随球体激活唱片
@@ -1229,12 +1234,18 @@ export default function InfiniteMenu({ items = [], scale = 1.0, audioSrc, lrcSrc
       setPlaylistIndex(null);
     };
 
+    // 拖动状态变化时同时通知父组件（用于背景塌陷等效果）
+    const handleMovementChange = isMoving => {
+      setIsMoving(isMoving);
+      onMovementChangeRef.current?.(isMoving);
+    };
+
     if (canvas) {
       sketch = new InfiniteGridMenu(
         canvas,
         items.length ? items : defaultItems,
         handleActiveItem,
-        setIsMoving,
+        handleMovementChange,
         sk => sk.run(),
         scale
       );
