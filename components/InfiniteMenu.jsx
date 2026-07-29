@@ -1668,6 +1668,78 @@ export default function InfiniteMenu({ items = [], scale = 1.0, audioSrc, lrcSrc
     window.addEventListener('pointerup', handleUp);
   };
 
+  // 点击或拖动歌词跳转播放位置
+  const handleLyricPointerDown = e => {
+    const audio = audioRef.current;
+    const list = lyricsRef.current;
+    if (!audio || !list.length) return;
+
+    // 阻止默认行为（文本选择/原生拖拽），否则 pointermove 会被中断
+    e.preventDefault();
+    // 捕获指针，确保拖出元素后仍能收到 pointermove / pointerup
+    const target = e.currentTarget;
+    if (target.setPointerCapture) {
+      try { target.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+    }
+
+    // 找到 clientY 落在哪一行的区间内
+    const findLineAtY = clientY => {
+      let idx = 0;
+      for (let i = 0; i < list.length; i++) {
+        const el = lyricLineRefs.current[i];
+        if (!el) continue;
+        const rect = el.getBoundingClientRect();
+        if (clientY >= rect.top) {
+          idx = i;
+        } else {
+          break;
+        }
+      }
+      return idx;
+    };
+
+    const seekToIndex = idx => {
+      const t = list[idx].time;
+      audio.currentTime = t;
+      setCurrentTime(t);
+      setActiveLyricIndex(idx);
+    };
+
+    // 点击：跳到指针所在行
+    seekToIndex(findLineAtY(e.clientY));
+
+    // 拖动：以相对偏移 seek（反向，拖下=往前，拖上=往后，像抓着歌词拽）
+    const startY = e.clientY;
+    const startTime = audio.currentTime;
+    const totalPixels = lineHeights.reduce((s, h) => s + h, 0) || 1;
+    const totalTime = list.length > 1 ? list[list.length - 1].time - list[0].time : 1;
+    const pxToTime = totalTime / totalPixels;
+
+    const handleMove = ev => {
+      ev.preventDefault();
+      const delta = ev.clientY - startY; // 拖下为正
+      const newTime = Math.max(0, Math.min(duration || audio.duration || 9999, startTime - delta * pxToTime));
+      audio.currentTime = newTime;
+      setCurrentTime(newTime);
+      // 同步高亮行
+      let idx = 0;
+      for (let i = 0; i < list.length; i++) {
+        if (list[i].time <= newTime) idx = i;
+        else break;
+      }
+      setActiveLyricIndex(idx);
+    };
+    const handleUp = ev => {
+      target.removeEventListener('pointermove', handleMove);
+      target.removeEventListener('pointerup', handleUp);
+      if (target.releasePointerCapture && ev?.pointerId != null) {
+        try { target.releasePointerCapture(ev.pointerId); } catch { /* ignore */ }
+      }
+    };
+    target.addEventListener('pointermove', handleMove);
+    target.addEventListener('pointerup', handleUp);
+  };
+
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
       <canvas id="infinite-grid-menu-canvas" ref={canvasRef} />
@@ -1689,6 +1761,7 @@ export default function InfiniteMenu({ items = [], scale = 1.0, audioSrc, lrcSrc
             style={{
               transform: `translateY(${(panelHeight / 2 - (lineHeights.slice(0, activeLyricIndex).reduce((sum, h) => sum + h, 0) + (lineHeights[activeLyricIndex] || 0) / 2)).toFixed(1)}px)`
             }}
+            onPointerDown={handleLyricPointerDown}
           >
             {lyrics.map((line, i) => (
               <p

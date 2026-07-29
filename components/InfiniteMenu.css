@@ -99,6 +99,8 @@
 
 .lyrics-track {
   transition: transform 0.45s ease;
+  cursor: pointer;
+  touch-action: none;
 }
 
 .lyric-line {
@@ -110,6 +112,7 @@
   letter-spacing: 0.02em;
   /* 长句自动换行，不再单行截断 */
   white-space: normal;
+  user-select: none;
   color: rgba(255, 255, 255, 0.32);
   transition: color 0.35s ease;
 }
