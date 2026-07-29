@@ -1,4 +1,5 @@
 import InfiniteMenu from "@/components/InfiniteMenu";
+import Galaxy from "@/components/Galaxy";
 
 const items = [
   {
@@ -41,7 +42,26 @@ const items = [
 export default function Home() {
   return (
     <div style={{ height: "100vh", position: "relative" }}>
-      <InfiniteMenu items={items} />
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          zIndex: 0,
+          pointerEvents: "none",
+        }}
+      >
+        <Galaxy
+          mouseInteraction={false}
+          mouseRepulsion={false}
+          density={1.2}
+          glowIntensity={0.4}
+          twinkleIntensity={0.4}
+          rotationSpeed={0.05}
+        />
+      </div>
+      <div style={{ position: "relative", zIndex: 1, width: "100%", height: "100%" }}>
+        <InfiniteMenu items={items} />
+      </div>
     </div>
   );
 }
