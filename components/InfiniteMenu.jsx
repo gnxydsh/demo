@@ -14,16 +14,6 @@ uniform mat4 uViewMatrix;
 uniform mat4 uProjectionMatrix;
 uniform vec3 uCameraPosition;
 uniform vec4 uRotationAxisVelocity;
-uniform int uActiveDisc;
-uniform int uPreviousDisc;
-uniform int uDragPreviewDisc;
-uniform float uSwitchProgress;
-uniform float uAutoSwitching;
-uniform float uDragging;
-uniform float uDragCommitProgress;
-uniform vec2 uDragOffset;
-uniform vec2 uFocusNdcScale;
-uniform float uGrabProgress;
 
 in vec3 aModelPosition;
 in vec3 aModelNormal;
@@ -32,6 +22,7 @@ in mat4 aInstanceMatrix;
 
 out vec2 vUvs;
 out float vAlpha;
+flat out vec2 vScreenCenter;
 flat out int vInstanceId;
 
 #define PI 3.141593
@@ -41,18 +32,15 @@ void main() {
 
     vec3 centerPos = (uWorldMatrix * aInstanceMatrix * vec4(0., 0., 0., 1.)).xyz;
     float radius = length(centerPos.xyz);
-    float isActive = gl_InstanceID == uActiveDisc ? 1.0 : 0.0;
-    float isPrevious = gl_InstanceID == uPreviousDisc ? 1.0 : 0.0;
-    float isDragPreview = gl_InstanceID == uDragPreviewDisc ? 1.0 : 0.0;
-    float isAutoFocus = max(
-      max(isActive, isPrevious) * uAutoSwitching,
-      max(isActive, isDragPreview) * uDragging
-    );
 
-    // 自动切歌的两颗焦点星球已有独立时间线，不再叠加旋转拉伸，避免轮廓逐帧抖动。
-    if (gl_VertexID > 0 && isAutoFocus < 0.5) {
+    // 整片星群共用同一种弹性：拖动或按钮推动得越快，
+    // 每颗星球越会沿运动方向轻微拉伸，速度落下后再恢复成圆形。
+    if (gl_VertexID > 0) {
         vec3 rotationAxis = uRotationAxisVelocity.xyz;
-        float rotationVelocity = min(.15, uRotationAxisVelocity.w * 15.);
+        // 过滤接近静止时的微小速度，并把最大形变量压到旧参数的约三分之一。
+        // 保留“软弹”反馈，但不会因最后几帧的速度变化反复抖动。
+        float effectiveVelocity = max(0., uRotationAxisVelocity.w - .0015);
+        float rotationVelocity = min(.05, effectiveVelocity * 4.5);
         vec3 stretchDir = normalize(cross(centerPos, rotationAxis));
         vec3 relativeVertexPos = normalize(worldPosition.xyz - centerPos);
         float strength = dot(stretchDir, relativeVertexPos);
@@ -64,84 +52,12 @@ void main() {
     worldPosition.xyz = radius * normalize(worldPosition.xyz);
 
     gl_Position = uProjectionMatrix * uViewMatrix * worldPosition;
+    vec4 centerClip = uProjectionMatrix * uViewMatrix * vec4(centerPos, 1.);
+    vScreenCenter = centerClip.xy / max(.0001, centerClip.w);
 
-    // 切歌不是“瞬间换皮”：旧星球向左上退入深空，新星球从右下靠近主舞台。
-    // 切换期间使用固定镜头锚点，避免底层球体旋转把星球过早甩出画面。
-    // 只有按钮/程序触发的切歌才使用固定镜头锚点。
-    // 手势拖动时必须跟随球体本身，否则中心星球会像被钉在屏幕上一样。
-    float isSwitching = uAutoSwitching;
-    float switchEase = uSwitchProgress * uSwitchProgress * (3.0 - 2.0 * uSwitchProgress);
-    vec4 centerClip = uProjectionMatrix * uViewMatrix * vec4(centerPos, 1.0);
-    vec2 centerNdc = centerClip.xy / max(0.0001, centerClip.w);
-    vec2 vertexNdc = gl_Position.xy / max(0.0001, gl_Position.w);
-    vec2 localNdc = vertexNdc - centerNdc;
-    // 切换中的焦点星球使用固定的屏幕尺寸。
-    // aModelPosition 是星球自身的圆形坐标，不会被底层球面旋转、透视远近或实例缩放带着跳动。
-    vec2 stableLocalNdc = aModelPosition.xy * uFocusNdcScale;
-    // 鼠标长按和握拳抓取共用同一个后缩进度。
-    vec2 grabbedLocalNdc = stableLocalNdc * mix(1.0, 0.84, uGrabProgress);
-
-    // 旧星球必须从点击前的中心位置起步，否则第一帧会发生明显瞬移。
-    vec2 previousAnchor = mix(vec2(0.0), vec2(-0.48, 0.10), switchEase);
-    vec2 activeAnchor = mix(vec2(0.42, -0.08), vec2(0.0), switchEase);
-    // 按钮切歌只改变位置，不改变星球大小，避免出现“先小后大”的呼吸感。
-    float previousScale = 1.0;
-    float activeScale = 1.0;
-    vec2 previousNdc = previousAnchor + stableLocalNdc * previousScale;
-    vec2 activeNdc = activeAnchor + stableLocalNdc * activeScale;
-    vec2 transitionNdc = mix(
-      vertexNdc,
-      previousNdc,
-      isPrevious * isSwitching
-    );
-    transitionNdc = mix(
-      transitionNdc,
-      activeNdc,
-      isActive * isSwitching
-    );
-
-    // 两颗星球共用同一条连续轨道：当前星球跟手离场，候选星球从反方向同步进场。
-    // 不限制 uDragOffset，指针移出画布后星球仍会继续移动，不会在边缘“撞墙”。
-    float dragLength = length(uDragOffset);
-    float dragTrackLength = 1.08;
-    float dragAmount = smoothstep(0.0, 1.0, clamp(dragLength / dragTrackLength, 0.0, 1.0));
-    vec2 dragDirection = dragLength > 0.0001 ? normalize(uDragOffset) : vec2(-1.0, 0.0);
-    vec2 activeDragNdc =
-      uDragOffset + grabbedLocalNdc * mix(1.0, 0.78, dragAmount);
-    vec2 previewTrackAnchor = uDragOffset - dragDirection * dragTrackLength;
-    // 成功切歌时，下一颗星球从当前位置继续向中心收尾；
-    // 当前星球仍沿原方向离场，不再反向拉回固定点。
-    vec2 previewAnchor = mix(previewTrackAnchor, vec2(0.0), uDragCommitProgress);
-    float dragPreviewScale = mix(
-      mix(0.78, 1.0, dragAmount),
-      1.0,
-      uDragCommitProgress
-    );
-    vec2 dragPreviewNdc =
-      previewAnchor + grabbedLocalNdc * dragPreviewScale;
-    transitionNdc = mix(
-      transitionNdc,
-      dragPreviewNdc,
-      isDragPreview * uDragging
-    );
-    transitionNdc = mix(
-      transitionNdc,
-      activeDragNdc,
-      isActive * uDragging
-    );
-    gl_Position.xy = transitionNdc * gl_Position.w;
-
-    // 旧星球前半程保持可见，后半程才真正落入更深的空间层。
-    float previousDepth = mix(0.0, 0.060, switchEase);
-    gl_Position.z += isPrevious * isSwitching * previousDepth * gl_Position.w;
-    // 拖动预览固定在前景层，中央当前星球略靠前，避免透明星球互相穿插闪烁。
-    gl_Position.z = mix(gl_Position.z, -0.010 * gl_Position.w, isDragPreview * uDragging);
-    gl_Position.z = mix(gl_Position.z, -0.018 * gl_Position.w, isActive * uDragging);
-
-    // 焦点星球已经走独立的屏幕轨道，透明度也必须脱离底层球面深度。
-    // 否则松手提交后，候选星球会先随背面深度变暗，再在吸附到正面时突然亮回。
-    float depthAlpha = smoothstep(0.5, 1., normalize(worldPosition.xyz).z) * .9 + .1;
-    vAlpha = mix(depthAlpha, 1.0, isAutoFocus);
+    // 星球永远使用自己在球形星群里的真实深度。
+    // 因此它们会自然从上下左右进入画面，而不是被钉在一条预设轨道上。
+    vAlpha = smoothstep(0.5, 1., normalize(worldPosition.xyz).z) * .9 + .1;
     vUvs = aModelUvs;
     vInstanceId = gl_InstanceID;
 }
@@ -156,14 +72,9 @@ uniform sampler2D uSurfaceTex;
 uniform int uItemCount;
 uniform int uAtlasSize;
 uniform int uActiveDisc;
-uniform int uPreviousDisc;
-uniform int uDragPreviewDisc;
 uniform float uFrames;
 uniform float uSpinAngle;
 uniform float uSurroundingVisibility;
-uniform float uSwitchProgress;
-uniform float uAutoSwitching;
-uniform float uDragging;
 uniform float uAudioBass;
 uniform float uAudioMid;
 uniform float uAudioTreble;
@@ -172,6 +83,7 @@ out vec4 outColor;
 
 in vec2 vUvs;
 in float vAlpha;
+flat in vec2 vScreenCenter;
 flat in int vInstanceId;
 
 #define PI 3.141593
@@ -210,7 +122,8 @@ float fbm(vec2 p) {
 }
 
 void main() {
-    int itemIndex = vInstanceId % uItemCount;
+    int itemCount = max(1, uItemCount);
+    int itemIndex = vInstanceId % itemCount;
     int cellsPerRow = uAtlasSize;
     int cellX = itemIndex % cellsPerRow;
     int cellY = itemIndex / cellsPerRow;
@@ -226,20 +139,6 @@ void main() {
     }
 
     float isActive = vInstanceId == uActiveDisc ? 1.0 : 0.0;
-    float isPrevious = vInstanceId == uPreviousDisc ? 1.0 : 0.0;
-    float isDragPreview = vInstanceId == uDragPreviewDisc ? 1.0 : 0.0;
-    float previousFade = 1.0 - smoothstep(0.28, 0.82, uSwitchProgress);
-    float previousVisibility = isPrevious * previousFade;
-    float dragPreviewVisibility = isDragPreview * uDragging * 0.82;
-    float distantVisibility = max(
-      max(uSurroundingVisibility * 0.42, previousVisibility),
-      dragPreviewVisibility
-    );
-    float activeEntrance = mix(1.0, smoothstep(0.04, 0.48, uSwitchProgress), uAutoSwitching);
-    float instanceVisibility = mix(distantVisibility, activeEntrance, isActive);
-    if (instanceVisibility < 0.002) {
-        discard;
-    }
 
     // 圆形网格只负责轮廓，法线在片元阶段重建，让星球拥有连续的球面明暗。
     vec2 sphereXY = pRaw * 2.0;
@@ -434,7 +333,7 @@ void main() {
       + (chippedDetail - 0.5) * 0.072;
     float coreLimit = 0.94 + coreEdgeWarp;
     float craterLimit =
-      1.50
+      1.28
       + coreEdgeWarp * 0.58
       + sin(coreAngle * 13.0 + chippedNoise * 5.0) * 0.038
       + (chippedDetail - 0.5) * 0.050;
@@ -507,11 +406,7 @@ void main() {
     float outsideCrater = 1.0 - craterMask;
     surfaceCrack *= outsideCrater;
     surfaceCrackLip *= outsideCrater * (1.0 - surfaceCrack);
-    float brokenRimLip =
-      (1.0 - smoothstep(0.0, 0.095, abs(coreDistance - craterLimit)))
-      * outsideCrater;
     shellColor = mix(shellColor, deepColor * 0.04, surfaceCrack * 0.86);
-    shellColor *= 1.0 - brokenRimLip * (0.38 + chippedDetail * 0.20);
     shellColor += mix(middleColor, vec3(0.54, 0.57, 0.62), 0.34)
       * surfaceCrackLip
       * daylight
@@ -527,10 +422,9 @@ void main() {
     ) - 0.5;
 
     vec3 coreHalfVector = normalize(lightDirection + vec3(0.0, 0.0, 1.0));
-    float innerCoreLimit =
-      0.64
-      + sin(coreAngle * 7.0 - 0.4) * 0.008
-      + (chippedNoise - 0.5) * 0.018;
+    // 封面填满中心区域，但不再继承坑洞的随机崩边。
+    // 固定圆形边界让人物和文字不会被不规则轮廓切掉。
+    float innerCoreLimit = 1.18;
 
     // 液态外核：铁镍流体是连续、厚重的金橙色层，不是一圈均匀霓虹红光。
     float liquidFlowA = fbm(
@@ -714,12 +608,12 @@ void main() {
       1.0 - smoothstep(0.0, 0.060, abs(coreDistance - coreLimit));
     outerCoreColor *= 1.0 - innerCoreContact * 0.26 - outerCoreContact * 0.18;
 
-    // 封面位于深坑底部：保持接近平面，只在边缘加遮蔽，
-    // 避免它再鼓成一颗球，看起来像真正嵌在竖井底端。
+    // 封面不再使用硬圆形裁切。外侧约 18% 的范围逐渐淡入星球表面，
+    // 让画面自然消失，而不是出现一条可见的圆形边。
     float innerCoreMask =
       1.0 - smoothstep(
-        innerCoreLimit - coreAa * 1.4,
-        innerCoreLimit + coreAa * 1.4,
+        innerCoreLimit * 0.82,
+        innerCoreLimit,
         coreDistance
       );
     vec2 innerCorePoint = corePoint / max(0.001, innerCoreLimit);
@@ -746,14 +640,9 @@ void main() {
     float innerCoreCurvature = smoothstep(0.04, 0.78, innerCoreZ);
     innerCoreColor *= 0.70 + innerCoreDiffuse * 0.34;
     innerCoreColor *= 0.93 + innerCoreCurvature * 0.07;
-    innerCoreColor *= 1.0 - smoothstep(0.70, 1.0, innerCoreDistance) * 0.30;
     float innerCoreHighlight =
       pow(max(0.0, dot(innerCoreNormal, coreHalfVector)), 30.0);
     innerCoreColor += vec3(1.0) * innerCoreHighlight * 0.14;
-    float coverGlassEdge = pow(smoothstep(0.48, 1.0, innerCoreDistance), 2.2);
-    innerCoreColor += coverMineralHue
-      * coverGlassEdge
-      * (0.025 + glassProfile * 0.045);
 
     float innerBoundary =
       smoothstep(innerCoreLimit - 0.045, innerCoreLimit, coreDistance)
@@ -878,15 +767,32 @@ void main() {
     coreColor += heatMid * coreHeatEdge * heatPulse * 0.018;
     coreColor += heatHot * coreHeatEdge * uAudioTreble * 0.008;
 
-    // 地表只保留极弱的深层反照，不能围成发光圆环。
-    float heatHalo =
-      (1.0 - smoothstep(craterLimit + 0.02, craterLimit + 0.52, coreDistance))
-      * (1.0 - craterMask);
-    float heatFocus = 0.30 + max(isActive, max(previousVisibility, isDragPreview * uDragging)) * 0.70;
-    shellColor += mix(heatDeep, heatMid, 0.32) * heatHalo * heatPulse * heatFocus * 0.032;
+    // 封面直接延伸到外层裂纹的根部。
+    // 使用与裂纹相同的 craterLimit 作为边界，中间不再夹圆形坑壁、暗缝或高光圈。
+    vec2 coverToCracksUv = clamp(
+      corePoint / 1.28 * 0.5 + 0.5,
+      vec2(0.008),
+      vec2(0.992)
+    );
+    coverToCracksUv.y = 1.0 - coverToCracksUv.y;
+    vec3 coverToCracksColor = texture(
+      uTex,
+      coverToCracksUv * cellSize + cellOffset
+    ).rgb;
+    coverToCracksColor = pow(
+      max(coverToCracksColor, vec3(0.0)),
+      vec3(0.96)
+    );
+    coverToCracksColor *= 0.88 + dayHemisphere * 0.12;
+    coverToCracksColor += vec3(1.0) * broadSpecular * 0.035;
 
-    vec3 color = mix(shellColor, craterColor, craterRim);
-    color = mix(color, coreColor, coreMask);
+    float coverToCracksMask =
+      1.0 - smoothstep(
+        craterLimit - coreAa,
+        craterLimit + coreAa,
+        coreDistance
+      );
+    vec3 color = mix(shellColor, coverToCracksColor, coverToCracksMask);
 
     float limb = pow(1.0 - sphereZ, 2.1);
     float wrappedLight = smoothstep(-0.36, 0.78, terrainLight);
@@ -894,7 +800,11 @@ void main() {
     // 整颗星球共享一个大尺度球面阴影，坑壁与星核因此属于同一个球体，
     // 不会像几张独立圆形贴图叠在一起。
     float globeShadow = 0.52 + dayHemisphere * 0.48;
-    color *= mix(globeShadow, 0.82 + dayHemisphere * 0.18, coreMask * 0.36);
+    color *= mix(
+      globeShadow,
+      0.82 + dayHemisphere * 0.18,
+      coverToCracksMask * 0.36
+    );
 
     // 薄大气层只沿轮廓出现；迎光侧更亮，背光侧只保留冷色细边。
     float atmosphere = limb * smoothstep(0.68, 0.99, r);
@@ -905,7 +815,7 @@ void main() {
     color += magicGlow
       * limb
       * surroundingDepth
-      * (1.0 - max(isActive, isPrevious))
+      * (1.0 - isActive)
       * 0.24;
 
     // 星环投在球面上的斜向暗影，让环确实像穿过星球，而不是悬浮贴纸
@@ -915,24 +825,24 @@ void main() {
     color *= 1.0 - ringShadow * ringShadowMask * 0.16;
 
     // 远处星球降低饱和度和亮度，像藏在宇宙褶皱后的天体，不抢中央焦点
-    float transitionFocus = max(
-      max(isActive, isPrevious * previousFade),
-      isDragPreview * uDragging * 0.78
-    );
+    float transitionFocus = isActive;
     float grayscale = luminance(color);
     color = mix(vec3(grayscale) * vec3(0.48, 0.62, 0.82), color, 0.28 + transitionFocus * 0.72);
     color *= 0.42 + transitionFocus * 0.58;
 
     float edgeAlpha = 1.0 - smoothstep(1.0 - aa, 1.0 + aa, r);
-    float focusedDepth = max(
-      vAlpha,
-      max(0.66 * previousFade, max(isActive, isDragPreview) * uDragging * 0.82)
-    );
-    // 拖动时保留近邻星球的轮廓，避免景深计算把它们压到完全不可见。
+    float focusedDepth = max(vAlpha, isActive);
+    // 远处星球保持可见但更暗，中央星球仍然是视觉焦点。
     float ambientDepth = mix(pow(vAlpha, 2.8), max(vAlpha, 0.46), surroundingDepth);
     float depthAlpha = mix(ambientDepth, focusedDepth, transitionFocus);
+
+    // 星球接近左右信息区或上下控制区时，以整颗星球为单位平滑淡出。
+    // 这样仍能从任意方向进入中央，但不会以半颗大球的形态压住标题和歌词。
+    float horizontalStage = 1.0 - smoothstep(0.62, 0.84, abs(vScreenCenter.x));
+    float verticalStage = 1.0 - smoothstep(0.76, 0.98, abs(vScreenCenter.y));
+    float safeStageAlpha = horizontalStage * verticalStage;
     outColor = vec4(color, 1.0);
-    outColor.a *= edgeAlpha * depthAlpha * instanceVisibility;
+    outColor.a *= edgeAlpha * depthAlpha * safeStageAlpha;
 }
 `;
 
@@ -1522,7 +1432,6 @@ class ArcballControl {
 class InfiniteGridMenu {
   TARGET_FRAME_DURATION = 1000 / 60;
   SPHERE_RADIUS = 2;
-  SWITCH_REVEAL_DURATION = 820;
 
   #time = 0;
   #deltaTime = 0;
@@ -1554,36 +1463,23 @@ class InfiniteGridMenu {
   reportedItemIndex = -1;
   surroundingVisibility = 0;
   activeDiscIndex = -1;
-  previousDiscIndex = -1;
   spinAngle = 0;
   spinning = false;
   audioBass = 0;
   audioMid = 0;
   audioTreble = 0;
-  switchRevealTime = 0;
   wasPointerDown = false;
-  dragOriginDiscIndex = -1;
-  dragPreviewDiscIndex = -1;
-  dragSettleActive = false;
-  dragSettleElapsed = 0;
-  dragSettleDuration = 260;
-  dragSettleProgress = 0;
-  dragSettleShouldCommit = false;
-  dragCommitDistance = 0.24;
-  dragSettleStartOffset = vec2.create();
-  dragSettleTargetOffset = vec2.create();
-  dragSettleOffset = vec2.create();
-  dragSettleTargetDiscIndex = -1;
-  grabProgress = 0;
-  dragSettleStartGrabProgress = 0;
-  dragSettleStartCameraZ = 3;
-  dragOriginOrientation = quat.create();
-  dragSettleStartOrientation = quat.create();
-  dragSettleTargetOrientation = quat.create();
   // 手动选曲时的目标顶点；>=0 表示正在吸附旋转，期间抑制 onActiveItemChange
   #manualSnapVertex = -1;
 
-  constructor(canvas, items, onActiveItemChange, onMovementChange, onInit = null, scale = 1.0) {
+  constructor(
+    canvas,
+    items,
+    onActiveItemChange,
+    onMovementChange,
+    onInit = null,
+    scale = 1.0
+  ) {
     this.canvas = canvas;
     this.items = items || [];
     this.onActiveItemChange = onActiveItemChange || (() => {});
@@ -1591,14 +1487,6 @@ class InfiniteGridMenu {
     this.scaleFactor = scale;
     this.camera.position[2] = 3 * scale;
     this.#init(onInit);
-  }
-
-  get isDragTransitioning() {
-    return (
-      this.interactionPhase === 'holding'
-      || this.interactionPhase === 'dragging'
-      || this.interactionPhase === 'settling'
-    );
   }
 
   #setInteractionPhase(nextPhase) {
@@ -1685,20 +1573,11 @@ class InfiniteGridMenu {
       uItemCount: gl.getUniformLocation(this.discProgram, 'uItemCount'),
       uAtlasSize: gl.getUniformLocation(this.discProgram, 'uAtlasSize'),
       uActiveDisc: gl.getUniformLocation(this.discProgram, 'uActiveDisc'),
-      uPreviousDisc: gl.getUniformLocation(this.discProgram, 'uPreviousDisc'),
-      uDragPreviewDisc: gl.getUniformLocation(this.discProgram, 'uDragPreviewDisc'),
       uSpinAngle: gl.getUniformLocation(this.discProgram, 'uSpinAngle'),
       uSurroundingVisibility: gl.getUniformLocation(this.discProgram, 'uSurroundingVisibility'),
-      uSwitchProgress: gl.getUniformLocation(this.discProgram, 'uSwitchProgress'),
-      uAutoSwitching: gl.getUniformLocation(this.discProgram, 'uAutoSwitching'),
-      uDragging: gl.getUniformLocation(this.discProgram, 'uDragging'),
       uAudioBass: gl.getUniformLocation(this.discProgram, 'uAudioBass'),
       uAudioMid: gl.getUniformLocation(this.discProgram, 'uAudioMid'),
-      uAudioTreble: gl.getUniformLocation(this.discProgram, 'uAudioTreble'),
-      uDragCommitProgress: gl.getUniformLocation(this.discProgram, 'uDragCommitProgress'),
-      uDragOffset: gl.getUniformLocation(this.discProgram, 'uDragOffset'),
-      uFocusNdcScale: gl.getUniformLocation(this.discProgram, 'uFocusNdcScale'),
-      uGrabProgress: gl.getUniformLocation(this.discProgram, 'uGrabProgress')
+      uAudioTreble: gl.getUniformLocation(this.discProgram, 'uAudioTreble')
     };
 
     this.discGeo = new DiscGeometry(56, 1);
@@ -1845,19 +1724,12 @@ class InfiniteGridMenu {
     const gl = this.gl;
     this.control.update(deltaTime, this.TARGET_FRAME_DURATION);
 
-    // 拖动或自动切歌时短暂露出远景星球，静止后再沉回宇宙褶皱
-    this.switchRevealTime = Math.max(0, this.switchRevealTime - deltaTime);
-    const isDragTransitioning = this.isDragTransitioning;
-    const isAutoSwitching =
-      !isDragTransitioning && (this.#manualSnapVertex >= 0 || this.switchRevealTime > 0);
-    // 拖动时只保留极淡的空间层，明确的下一首提示由边缘预览星球承担。
-    const surroundingTarget = isDragTransitioning ? 0.08 : isAutoSwitching ? 0.18 : 0;
-    const visibilityDuration = surroundingTarget > this.surroundingVisibility ? 150 : 460;
+    // 多颗星球始终存在于同一个球形空间里。
+    // 静止时也保留远近层次，拖动时只是转动整个空间，不临时拼出候场队列。
+    const surroundingTarget = 1;
+    const visibilityDuration = 240;
     const visibilityBlend = 1 - Math.exp(-deltaTime / visibilityDuration);
     this.surroundingVisibility += (surroundingTarget - this.surroundingVisibility) * visibilityBlend;
-    if (this.switchRevealTime === 0 && this.surroundingVisibility < 0.003) {
-      this.previousDiscIndex = -1;
-    }
 
     // 播放时只向前累计相位，不能在固定时长后归零。
     // 归零会让纹理瞬间跳回旧位置，看起来像整段动画重新播放。
@@ -1870,14 +1742,11 @@ class InfiniteGridMenu {
     const SCALE_INTENSITY = 0.6;
     positions.forEach((p, ndx) => {
       const s = (Math.abs(p[2]) / this.SPHERE_RADIUS) * SCALE_INTENSITY + (1 - SCALE_INTENSITY);
-      const isActivePlanet = ndx === this.activeDiscIndex;
-      const isPreviousPlanet = ndx === this.previousDiscIndex && this.switchRevealTime > 0;
-      // 主星球保持视觉焦点；远景星球缩小，形成进入/离开空间层的纵深关系
-      // 自动切换的旧星球保持原尺寸，退场缩放统一交给着色器，避免点击首帧骤缩。
-      const planetScale = isActivePlanet || isPreviousPlanet ? scale : scale * 0.66;
-      // 自动切换的焦点星球屏幕尺寸由着色器统一控制，不再叠加球面深度缩放。
-      const depthScale = isAutoSwitching && (isActivePlanet || isPreviousPlanet) ? 1 : s;
-      const finalScale = depthScale * planetScale;
+      // 所有实例使用同一种尺寸规则，只由真实空间深度决定远近。
+      // 同一首歌可以重复映射到多个位置，因此有限歌曲也能形成完整星群。
+      // 周围星球作为空间参照略小于中央焦点，避免贴近信息区时像另一颗主星闯入。
+      const focusScale = ndx === this.activeDiscIndex ? 1 : 0.76;
+      const finalScale = s * scale * focusScale;
       const matrix = mat4.create();
       mat4.multiply(matrix, matrix, mat4.fromTranslation(mat4.create(), vec3.negate(vec3.create(), p)));
       mat4.multiply(matrix, matrix, mat4.targetTo(mat4.create(), [0, 0, 0], p, [0, 1, 0]));
@@ -1915,13 +1784,6 @@ class InfiniteGridMenu {
       this.camera.position[1],
       this.camera.position[2]
     );
-    // 与正常吸附完成后的主星球尺寸保持一致，避免退出过渡状态时突然放大。
-    const focusRadiusNdcY = 0.41;
-    gl.uniform2f(
-      this.discLocations.uFocusNdcScale,
-      focusRadiusNdcY / Math.max(0.001, this.camera.aspect),
-      focusRadiusNdcY
-    );
     gl.uniform4f(
       this.discLocations.uRotationAxisVelocity,
       this.control.rotationAxis[0],
@@ -1933,39 +1795,11 @@ class InfiniteGridMenu {
     gl.uniform1i(this.discLocations.uItemCount, this.items.length);
     gl.uniform1i(this.discLocations.uAtlasSize, this.atlasSize);
     gl.uniform1i(this.discLocations.uActiveDisc, this.activeDiscIndex);
-    gl.uniform1i(this.discLocations.uPreviousDisc, this.previousDiscIndex);
-    gl.uniform1i(this.discLocations.uDragPreviewDisc, this.dragPreviewDiscIndex);
     gl.uniform1f(this.discLocations.uSpinAngle, this.spinAngle);
     gl.uniform1f(this.discLocations.uSurroundingVisibility, this.surroundingVisibility);
-    const switchProgress =
-      this.switchRevealTime > 0 ? 1 - this.switchRevealTime / this.SWITCH_REVEAL_DURATION : 1;
-    gl.uniform1f(this.discLocations.uSwitchProgress, Math.min(1, Math.max(0, switchProgress)));
-    const isDragTransitioning = this.isDragTransitioning;
-    const isAutoSwitching =
-      !isDragTransitioning && (this.#manualSnapVertex >= 0 || this.switchRevealTime > 0);
-    gl.uniform1f(this.discLocations.uAutoSwitching, isAutoSwitching ? 1 : 0);
-    gl.uniform1f(this.discLocations.uDragging, isDragTransitioning ? 1 : 0);
     gl.uniform1f(this.discLocations.uAudioBass, this.audioBass);
     gl.uniform1f(this.discLocations.uAudioMid, this.audioMid);
     gl.uniform1f(this.discLocations.uAudioTreble, this.audioTreble);
-    gl.uniform1f(this.discLocations.uGrabProgress, this.grabProgress);
-    gl.uniform1f(
-      this.discLocations.uDragCommitProgress,
-      this.dragSettleActive && this.dragSettleShouldCommit
-        ? this.dragSettleProgress
-        : 0
-    );
-    const dragOffsetX = this.dragSettleActive
-      ? this.dragSettleOffset[0]
-      : this.control.hasDragged
-        ? (this.control.dragOffsetX / Math.max(1, this.canvas.clientWidth)) * 2
-        : 0;
-    const dragOffsetY = this.dragSettleActive
-      ? this.dragSettleOffset[1]
-      : this.control.hasDragged
-        ? (-this.control.dragOffsetY / Math.max(1, this.canvas.clientHeight)) * 2
-        : 0;
-    gl.uniform2f(this.discLocations.uDragOffset, dragOffsetX, dragOffsetY);
 
     gl.uniform1f(this.discLocations.uFrames, this.#frames);
     gl.uniform1f(this.discLocations.uScaleFactor, this.scaleFactor);
@@ -2012,182 +1846,28 @@ class InfiniteGridMenu {
   }
 
   #onControlUpdate(deltaTime) {
-    const baseCameraZ = 3 * this.scaleFactor;
+    const timeScale = deltaTime / this.TARGET_FRAME_DURATION + 0.0001;
     const isPointerDown = this.control.isPointerDown;
-    const isActivelyDragging = isPointerDown && this.control.hasDragged;
-    const justPressed = isPointerDown && !this.wasPointerDown;
     const justReleased = !isPointerDown && this.wasPointerDown;
-    let cameraHandledBySettle = false;
+    let damping = 5 / timeScale;
+    let cameraTargetZ = 3 * this.scaleFactor;
 
-    if (
-      !isPointerDown
-      && this.interactionPhase === 'auto'
-      && this.#manualSnapVertex < 0
-      && this.switchRevealTime <= 0
-    ) {
-      this.#setInteractionPhase('idle');
-    }
-
-    if (justPressed) {
-      // 新的按住动作立即接管画面。如果上一段收尾尚未完成，先落到准确终点，
-      // 避免两条动画同时修改朝向，造成肉眼看到的“抽一下”。
-      if (this.dragSettleActive) {
-        quat.copy(this.control.orientation, this.dragSettleTargetOrientation);
-        this.control.stopInertia();
-        this.activeDiscIndex = this.dragSettleTargetDiscIndex;
-        if (this.dragSettleShouldCommit && this.dragSettleTargetDiscIndex >= 0) {
-          this.#reportActiveVertex(this.dragSettleTargetDiscIndex);
-        }
-        this.dragSettleActive = false;
-        this.dragSettleProgress = 0;
-        this.dragSettleShouldCommit = false;
-      }
-
-      // 按下的第一帧就停止旧惯性和按钮吸附；此后只有本次抓取能控制朝向。
-      this.control.stopInertia();
-      this.control.snapTargetDirection = null;
-      this.#manualSnapVertex = -1;
-      this.switchRevealTime = 0;
-      this.previousDiscIndex = -1;
-      this.dragOriginDiscIndex =
-        this.activeDiscIndex >= 0 ? this.activeDiscIndex : this.#findNearestVertexIndex();
-      this.dragPreviewDiscIndex = -1;
-      quat.copy(this.dragOriginOrientation, this.control.orientation);
-      this.#setInteractionPhase('holding');
-    }
-
-    // 松手后由同一条 260ms 时间线同时处理位置、球体朝向、后缩和镜头恢复。
-    // 成功切歌不再追加第二段吸附，所以新封面落位后不会再突然动一下。
     if (justReleased && this.#manualSnapVertex < 0) {
-      let previewTarget = this.dragOriginDiscIndex;
-      let releaseOffset = vec2.create();
-      let shouldCommit = false;
-
-      if (this.control.hasDragged) {
-        previewTarget =
-          this.dragPreviewDiscIndex >= 0
-            ? this.dragPreviewDiscIndex
-            : this.#findDragPreviewVertexIndex(this.dragOriginDiscIndex);
-        releaseOffset = vec2.fromValues(
-          (this.control.dragOffsetX / Math.max(1, this.canvas.clientWidth)) * 2,
-          (-this.control.dragOffsetY / Math.max(1, this.canvas.clientHeight)) * 2
-        );
-        const releaseDistance = vec2.length(releaseOffset);
-        shouldCommit =
-          previewTarget >= 0 && releaseDistance >= this.dragCommitDistance;
-        const releaseDirection =
-          releaseDistance > 0.0001
-            ? vec2.scale(vec2.create(), releaseOffset, 1 / releaseDistance)
-            : vec2.fromValues(-1, 0);
-
-        vec2.copy(this.dragSettleStartOffset, releaseOffset);
-        if (shouldCommit) {
-          // 成功切歌只沿当前方向再走一小段，绝不反向回拉。
-          vec2.scaleAndAdd(
-            this.dragSettleTargetOffset,
-            releaseOffset,
-            releaseDirection,
-            0.18
-          );
-        } else {
-          vec2.set(this.dragSettleTargetOffset, 0, 0);
-        }
-      } else {
-        vec2.set(this.dragSettleStartOffset, 0, 0);
-        vec2.set(this.dragSettleTargetOffset, 0, 0);
-      }
-
-      vec2.copy(this.dragSettleOffset, releaseOffset);
-      this.dragSettleTargetDiscIndex = shouldCommit
-        ? previewTarget
-        : this.dragOriginDiscIndex;
-      this.dragSettleElapsed = 0;
-      this.dragSettleProgress = 0;
-      this.dragSettleShouldCommit = shouldCommit;
-      this.dragSettleActive = true;
-      this.#setInteractionPhase('settling');
-      this.dragSettleStartGrabProgress = this.grabProgress;
-      this.dragSettleStartCameraZ = this.camera.position[2];
-      quat.copy(this.dragSettleStartOrientation, this.control.orientation);
-
-      if (shouldCommit) {
-        const targetDirection = vec3.normalize(
-          vec3.create(),
-          this.#getVertexWorldPosition(this.dragSettleTargetDiscIndex)
-        );
-        const alignment = quat.rotationTo(
-          quat.create(),
-          targetDirection,
-          this.control.snapDirection
-        );
-        quat.multiply(
-          this.dragSettleTargetOrientation,
-          alignment,
-          this.control.orientation
-        );
-        quat.normalize(
-          this.dragSettleTargetOrientation,
-          this.dragSettleTargetOrientation
-        );
-      } else {
-        quat.copy(this.dragSettleTargetOrientation, this.dragOriginOrientation);
-      }
-
-      this.control.stopInertia();
-      this.control.snapTargetDirection = null;
-      this.activeDiscIndex = this.dragOriginDiscIndex;
+      // 松手这一刻只选择一次最靠近中央的星球，之后锁定它完成吸附。
+      // 拖得远可以跨过多首，但收尾过程中不会连续误切歌曲。
+      const nearestVertexIndex = this.#findNearestVertexIndex();
+      this.activeDiscIndex = nearestVertexIndex;
+      this.#reportActiveVertex(nearestVertexIndex);
+      this.#manualSnapVertex = nearestVertexIndex;
     }
 
-    if (this.dragSettleActive && !isPointerDown) {
-      this.dragSettleElapsed += deltaTime;
-      const progress = Math.min(1, this.dragSettleElapsed / this.dragSettleDuration);
-      const ease = 1 - Math.pow(1 - progress, 3);
-      this.dragSettleProgress = ease;
-      vec2.lerp(
-        this.dragSettleOffset,
-        this.dragSettleStartOffset,
-        this.dragSettleTargetOffset,
-        ease
-      );
-      quat.slerp(
-        this.control.orientation,
-        this.dragSettleStartOrientation,
-        this.dragSettleTargetOrientation,
-        ease
-      );
-      quat.normalize(this.control.orientation, this.control.orientation);
-      this.grabProgress = this.dragSettleStartGrabProgress * (1 - ease);
-      this.camera.position[2] =
-        this.dragSettleStartCameraZ
-        + (baseCameraZ - this.dragSettleStartCameraZ) * ease;
-      cameraHandledBySettle = true;
-      this.activeDiscIndex = this.dragOriginDiscIndex;
-
-      if (progress >= 1) {
-        const settledTarget = this.dragSettleTargetDiscIndex;
-        const shouldCommit = this.dragSettleShouldCommit;
-        quat.copy(this.control.orientation, this.dragSettleTargetOrientation);
-        this.control.stopInertia();
-        this.control.snapTargetDirection = null;
-        this.activeDiscIndex = settledTarget;
-        this.dragPreviewDiscIndex = -1;
-        this.dragSettleActive = false;
-        this.dragSettleProgress = 0;
-        this.dragSettleShouldCommit = false;
-        this.grabProgress = 0;
-        this.camera.position[2] = baseCameraZ;
-        if (shouldCommit && settledTarget >= 0) {
-          this.#reportActiveVertex(settledTarget);
-        }
-        this.#setInteractionPhase('idle');
-      }
-    } else if (!isPointerDown) {
+    if (!isPointerDown) {
       if (this.#manualSnapVertex >= 0) {
-        // 手动选曲吸附：旋转到目标星球，期间不触发 onActiveItemChange
+        // 按钮只指定“哪颗星球到中央”，实际路线由它当前的空间位置决定。
         this.activeDiscIndex = this.#manualSnapVertex;
         const snapDirection = vec3.normalize(vec3.create(), this.#getVertexWorldPosition(this.#manualSnapVertex));
         this.control.snapTargetDirection = snapDirection;
-        // 接近目标后结束手动吸附，恢复正常吸附并触发一次激活变更
+
         if (vec3.dot(snapDirection, this.control.snapDirection) > 0.99) {
           this.#reportActiveVertex(this.#manualSnapVertex);
           this.#manualSnapVertex = -1;
@@ -2199,35 +1879,28 @@ class InfiniteGridMenu {
         const snapDirection = vec3.normalize(vec3.create(), this.#getVertexWorldPosition(nearestVertexIndex));
         this.control.snapTargetDirection = snapDirection;
       }
-    } else if (isActivelyDragging) {
-      this.#setInteractionPhase('dragging');
-      // 真正越过拖动门槛后才取消按钮切歌，并开始预览邻近星球。
-      this.#manualSnapVertex = -1;
-      this.switchRevealTime = 0;
-      this.previousDiscIndex = -1;
-
-      // 一次拖动只允许预览相邻的一首，拖得再远也不会连续跨过多颗星球。
-      // 中央 activeDiscIndex 仍锁定在按下前的歌曲，不会跟着拖动乱换。
-      this.dragPreviewDiscIndex = this.#findDragPreviewVertexIndex(this.dragOriginDiscIndex);
-      // 预览阶段绝不替换中央星球，真正的歌曲提交只发生在 pointerup。
-      this.activeDiscIndex = this.dragOriginDiscIndex;
     } else {
-      // 仍处于防误触范围：保持按下前的封面，但后缩从按下第一帧开始。
-      this.activeDiscIndex = this.dragOriginDiscIndex;
-      this.dragPreviewDiscIndex = -1;
+      // 指针和手势都直接把横纵坐标交给 Arcball。
+      // 所以向上、向下、向左、向右或斜向移动都会转动整片星群。
+      this.#manualSnapVertex = -1;
+      this.control.snapTargetDirection = null;
+      // 拖动时只做轻微呼吸，不再把高速拖动放大成大幅镜头抽动。
+      cameraTargetZ += 0.5 + Math.min(0.8, this.control.rotationVelocity * 18);
+      damping = 9 / timeScale;
     }
 
-    if (!cameraHandledBySettle) {
-      const grabTarget = isPointerDown ? 1 : 0;
-      const grabDuration = isPointerDown ? 62 : 180;
-      const grabBlend = 1 - Math.exp(-deltaTime / grabDuration);
-      this.grabProgress += (grabTarget - this.grabProgress) * grabBlend;
+    const stillSettling = Math.abs(this.smoothRotationVelocity) > 0.003;
+    const nextPhase = isPointerDown
+      ? (this.control.hasDragged ? 'dragging' : 'holding')
+      : this.#manualSnapVertex >= 0
+        ? 'auto'
+        : stillSettling
+          ? 'settling'
+          : 'idle';
+    this.#setInteractionPhase(nextPhase);
 
-      const cameraTargetZ = baseCameraZ + this.grabProgress * 0.52;
-      const cameraBlend = 1 - Math.exp(-deltaTime / (isPointerDown ? 76 : 190));
-      this.camera.position[2] +=
-        (cameraTargetZ - this.camera.position[2]) * cameraBlend;
-    }
+    this.camera.position[2] +=
+      (cameraTargetZ - this.camera.position[2]) / Math.max(1, damping);
 
     this.#updateCameraMatrix();
     this.wasPointerDown = isPointerDown;
@@ -2250,36 +1923,6 @@ class InfiniteGridMenu {
     return nearestVertexIndex;
   }
 
-  #findDragPreviewVertexIndex(currentIndex) {
-    if (currentIndex < 0 || this.items.length < 2) return -1;
-
-    const horizontalTravel = this.control.dragOffsetX;
-    const verticalTravel = this.control.dragOffsetY;
-    const dominantTravel =
-      Math.abs(horizontalTravel) >= Math.abs(verticalTravel)
-        ? horizontalTravel
-        : verticalTravel;
-    // 内容跟随手指：向左/向上拖时，下一首从反方向进入；反向则预览上一首。
-    const itemStep = dominantTravel < 0 ? 1 : -1;
-    const itemCount = this.items.length;
-    const currentItemIndex = currentIndex % itemCount;
-    const previewItemIndex = (currentItemIndex + itemStep + itemCount) % itemCount;
-
-    const n = this.control.snapDirection;
-    let bestVertexIndex = -1;
-    let bestDot = -2;
-    for (let i = 0; i < this.instancePositions.length; ++i) {
-      if (i % itemCount !== previewItemIndex) continue;
-      const worldPosition = this.#getVertexWorldPosition(i);
-      const dot = vec3.dot(vec3.normalize(vec3.create(), worldPosition), n);
-      if (dot > bestDot) {
-        bestDot = dot;
-        bestVertexIndex = i;
-      }
-    }
-    return bestVertexIndex;
-  }
-
   #getVertexWorldPosition(index) {
     const nearestVertexPos = this.instancePositions[index];
     return vec3.transformQuat(vec3.create(), nearestVertexPos, this.control.orientation);
@@ -2293,10 +1936,6 @@ class InfiniteGridMenu {
 
   /** 旋转宇宙层，使映射到 itemIndex 的星球朝向相机 */
   snapToItem(itemIndex) {
-    this.dragSettleActive = false;
-    this.dragSettleProgress = 0;
-    this.dragSettleShouldCommit = false;
-    this.dragPreviewDiscIndex = -1;
     const count = Math.max(1, this.items.length);
     const n = this.control.snapDirection;
     // 选当前最接近朝向相机的同 item 顶点，让旋转距离最短
@@ -2312,11 +1951,8 @@ class InfiniteGridMenu {
       }
     }
     if (best < 0) return;
-    this.previousDiscIndex = this.activeDiscIndex;
     this.#manualSnapVertex = best;
     this.#setInteractionPhase('auto');
-    // 即使目标星球距离很近，也保留一小段远景显现时间，避免切换像瞬间换贴图
-    this.switchRevealTime = this.SWITCH_REVEAL_DURATION;
   }
 }
 
@@ -2327,6 +1963,61 @@ const defaultItems = [
     artist: ''
   }
 ];
+
+function OrbitInscription({ item, layer, isPlaying, isMoving }) {
+  if (!item) return null;
+
+  const isFront = layer === 'front';
+  const pathId = `orbit-inscription-path-${layer}`;
+  const label = isFront
+    ? (item.title || 'UNTITLED')
+    : (item.artist || 'UNKNOWN ARTIST');
+  const startOffset = isFront ? '18%' : '56%';
+  const endOffset = isFront ? '31%' : '43%';
+
+  return (
+    <svg
+      key={`${layer}-${item.title}-${item.artist}`}
+      className={[
+        'orbit-inscription',
+        `orbit-inscription-${layer}`,
+        isMoving ? 'inactive' : ''
+      ].filter(Boolean).join(' ')}
+      viewBox="0 0 1000 133"
+      preserveAspectRatio="none"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <defs>
+        <path
+          id={pathId}
+          d={
+            isFront
+              ? 'M 15 66.5 C 250 121 750 121 985 66.5'
+              : 'M 15 66.5 C 250 12 750 12 985 66.5'
+          }
+        />
+      </defs>
+      <text>
+        <textPath
+          href={`#${pathId}`}
+          startOffset={startOffset}
+        >
+          {label}
+          {isPlaying && (
+            <animate
+              attributeName="startOffset"
+              from={startOffset}
+              to={endOffset}
+              dur={isFront ? '62s' : '74s'}
+              repeatCount="indefinite"
+            />
+          )}
+        </textPath>
+      </text>
+    </svg>
+  );
+}
 
 /** 秒数格式化为 m:ss */
 function formatTime(sec) {
@@ -2438,8 +2129,21 @@ function extractDominantHue(imageSrc) {
  * @param {(hue: number) => void} [props.onColorChange]
  * @param {(isMoving: boolean) => void} [props.onMovementChange]
  * @param {(progress: number) => void} [props.onProgressChange] 0 到 1 的歌曲进度
+ * @param {(detail: {currentTime: number, duration: number, progress: number, title: string, artist: string, lyric: string}) => void} [props.onPlaybackDetailChange]
+ * @param {(isFavorite: boolean) => void} [props.onFavoriteChange]
  */
-export default function InfiniteMenu({ items = [], scale = 1.0, audioSrc, lrcSrc, onPlayingChange, onColorChange, onMovementChange, onProgressChange }) {
+export default function InfiniteMenu({
+  items = [],
+  scale = 1.0,
+  audioSrc,
+  lrcSrc,
+  onPlayingChange,
+  onColorChange,
+  onMovementChange,
+  onProgressChange,
+  onPlaybackDetailChange,
+  onFavoriteChange
+}) {
   const shellRef = useRef(null);
   const canvasRef = useRef(null);
   const audioRef = useRef(null);
@@ -2451,15 +2155,21 @@ export default function InfiniteMenu({ items = [], scale = 1.0, audioSrc, lrcSrc
   const lyricsRef = useRef([]);
   const lyricsPanelRef = useRef(null);
   const lyricLineRefs = useRef([]);
+  const lyricPointersRef = useRef(new Map());
+  const lyricGestureRef = useRef(null);
+  const lyricWheelGestureRef = useRef({ active: false, startTime: 0, deltaY: 0 });
+  const lyricWheelEndTimerRef = useRef(0);
   const [activeItem, setActiveItem] = useState(null);
   const [isMoving, setIsMoving] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [lyrics, setLyrics] = useState([]);
   const [activeLyricIndex, setActiveLyricIndex] = useState(0);
+  const [lyricSeekPreview, setLyricSeekPreview] = useState(null);
   const [lineHeights, setLineHeights] = useState([]);
   const [panelHeight, setPanelHeight] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [isFavorite, setIsFavorite] = useState(false);
   const songProgress = duration > 0
     ? Math.min(1, Math.max(0, currentTime / duration))
     : 0;
@@ -2579,6 +2289,7 @@ export default function InfiniteMenu({ items = [], scale = 1.0, audioSrc, lrcSrc
 
   useEffect(() => {
     return () => {
+      window.clearTimeout(lyricWheelEndTimerRef.current);
       cancelAnimationFrame(audioAnalysisFrameRef.current);
       audioSourceRef.current?.disconnect();
       audioAnalyserRef.current?.disconnect();
@@ -2655,6 +2366,28 @@ export default function InfiniteMenu({ items = [], scale = 1.0, audioSrc, lrcSrc
     onProgressChange?.(songProgress);
   }, [onProgressChange, songProgress]);
 
+  useEffect(() => {
+    onPlaybackDetailChange?.({
+      currentTime,
+      duration,
+      progress: songProgress,
+      title: song?.title || activeItem?.title || '未知歌曲',
+      artist: song?.artist || activeItem?.artist || '',
+      lyric: lyrics[activeLyricIndex]?.text || ''
+    });
+  }, [
+    activeItem?.artist,
+    activeItem?.title,
+    activeLyricIndex,
+    currentTime,
+    duration,
+    lyrics,
+    onPlaybackDetailChange,
+    song?.artist,
+    song?.title,
+    songProgress
+  ]);
+
   // 切换激活唱片时，提取封面主色调通知父组件，用于背景星空配色
   useEffect(() => {
     if (!activeItem?.image) return;
@@ -2671,34 +2404,53 @@ export default function InfiniteMenu({ items = [], scale = 1.0, audioSrc, lrcSrc
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio || !currentAudio) return;
+    lyricPointersRef.current.clear();
+    lyricGestureRef.current = null;
+    lyricWheelGestureRef.current = { active: false, startTime: 0, deltaY: 0 };
+    window.clearTimeout(lyricWheelEndTimerRef.current);
+    setLyricSeekPreview(null);
     setCurrentTime(0);
     setDuration(0);
     setActiveLyricIndex(0);
+    setIsFavorite(false);
+    onFavoriteChange?.(false);
     if (isPlayingRef.current) {
       audio
         .play()
         .then(() => setIsPlaying(true))
         .catch(() => setIsPlaying(false));
     }
-  }, [currentAudio]);
+  }, [currentAudio, onFavoriteChange]);
+
+  const handleFavoriteToggle = () => {
+    setIsFavorite(currentValue => {
+      const nextValue = !currentValue;
+      onFavoriteChange?.(nextValue);
+      return nextValue;
+    });
+  };
 
   useEffect(() => {
     lyricsRef.current = [];
-    setLyrics([]);
-    if (!currentLrc) return;
     let cancelled = false;
-    fetch(currentLrc)
-      .then(res => res.text())
-      .then(text => {
-        if (!cancelled) {
-          const parsed = parseLrc(text);
-          lyricsRef.current = parsed;
-          setLyrics(parsed);
-        }
-      })
-      .catch(err => console.error('Failed to load lyrics:', err));
+    const clearLyricsTimer = window.setTimeout(() => {
+      if (!cancelled) setLyrics([]);
+    }, 0);
+    if (currentLrc) {
+      fetch(currentLrc)
+        .then(res => res.text())
+        .then(text => {
+          if (!cancelled) {
+            const parsed = parseLrc(text);
+            lyricsRef.current = parsed;
+            setLyrics(parsed);
+          }
+        })
+        .catch(err => console.error('Failed to load lyrics:', err));
+    }
     return () => {
       cancelled = true;
+      window.clearTimeout(clearLyricsTimer);
     };
   }, [currentLrc]);
 
@@ -3059,80 +2811,279 @@ export default function InfiniteMenu({ items = [], scale = 1.0, audioSrc, lrcSrc
     window.addEventListener('pointerup', handleUp);
   };
 
-  // 点击或拖动歌词跳转播放位置
+  const currentLyricSeekPreview =
+    lyricSeekPreview?.audio === currentAudio ? lyricSeekPreview : null;
+
+  const findLyricIndexAtY = clientY => {
+    const list = lyricsRef.current;
+    let index = 0;
+    for (let i = 0; i < list.length; i++) {
+      const element = lyricLineRefs.current[i];
+      if (!element) continue;
+      const rect = element.getBoundingClientRect();
+      if (clientY >= rect.top) index = i;
+      else break;
+    }
+    return index;
+  };
+
+  const findLyricIndexAtTime = time => {
+    const list = lyricsRef.current;
+    let index = 0;
+    for (let i = 0; i < list.length; i++) {
+      if (list[i].time <= time) index = i;
+      else break;
+    }
+    return index;
+  };
+
+  // 这里只更新“候选歌词”，不触碰 audio.currentTime。
+  // 真正跳转必须经过 confirmLyricSeek，避免点按或双指手势误触。
+  const previewLyricAtIndex = (index, source) => {
+    const list = lyricsRef.current;
+    if (!list.length || !currentAudio) return;
+    const safeIndex = Math.max(0, Math.min(list.length - 1, index));
+    const line = list[safeIndex];
+    setLyricSeekPreview(previous => {
+      if (
+        previous?.audio === currentAudio
+        && previous.index === safeIndex
+        && previous.source === source
+      ) {
+        return previous;
+      }
+      return {
+        audio: currentAudio,
+        index: safeIndex,
+        time: line.time,
+        text: line.text,
+        source
+      };
+    });
+  };
+
+  const previewLyricAtTime = (time, source) => {
+    const audio = audioRef.current;
+    const list = lyricsRef.current;
+    if (!audio || !list.length) return;
+    const maxTime = Math.max(
+      list[list.length - 1]?.time || 0,
+      duration || audio.duration || 0
+    );
+    const safeTime = Math.max(0, Math.min(maxTime, time));
+    previewLyricAtIndex(findLyricIndexAtTime(safeTime), source);
+  };
+
+  const resetLyricSeekGesture = () => {
+    lyricPointersRef.current.clear();
+    lyricGestureRef.current = null;
+    lyricWheelGestureRef.current = { active: false, startTime: 0, deltaY: 0 };
+    window.clearTimeout(lyricWheelEndTimerRef.current);
+  };
+
+  const cancelLyricSeek = () => {
+    resetLyricSeekGesture();
+    setLyricSeekPreview(null);
+  };
+
+  const confirmLyricSeek = () => {
+    const audio = audioRef.current;
+    const preview = currentLyricSeekPreview;
+    if (!audio || !preview) return;
+    audio.currentTime = preview.time;
+    setCurrentTime(preview.time);
+    setActiveLyricIndex(preview.index);
+    resetLyricSeekGesture();
+    setLyricSeekPreview(null);
+  };
+
+  // 单指/鼠标只负责选择候选句；双指上下滑只负责预览候选时间。
+  // 两种操作都不会直接改变播放进度。
   const handleLyricPointerDown = e => {
     const audio = audioRef.current;
     const list = lyricsRef.current;
     if (!audio || !list.length) return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
 
-    // 阻止默认行为（文本选择/原生拖拽），否则 pointermove 会被中断
     e.preventDefault();
-    // 捕获指针，确保拖出元素后仍能收到 pointermove / pointerup
     const target = e.currentTarget;
     if (target.setPointerCapture) {
       try { target.setPointerCapture(e.pointerId); } catch { /* ignore */ }
     }
 
-    // 找到 clientY 落在哪一行的区间内
-    const findLineAtY = clientY => {
-      let idx = 0;
-      for (let i = 0; i < list.length; i++) {
-        const el = lyricLineRefs.current[i];
-        if (!el) continue;
-        const rect = el.getBoundingClientRect();
-        if (clientY >= rect.top) {
-          idx = i;
-        } else {
-          break;
-        }
-      }
-      return idx;
-    };
+    const pointers = lyricPointersRef.current;
+    pointers.set(e.pointerId, {
+      clientY: e.clientY,
+      startY: e.clientY,
+      pointerType: e.pointerType
+    });
 
-    const seekToIndex = idx => {
-      const t = list[idx].time;
-      audio.currentTime = t;
-      setCurrentTime(t);
-      setActiveLyricIndex(idx);
-    };
+    const touchPointers = [...pointers.values()].filter(
+      pointer => pointer.pointerType === 'touch'
+    );
 
-    // 点击：跳到指针所在行
-    seekToIndex(findLineAtY(e.clientY));
+    if (touchPointers.length === 1 && pointers.size === 1) {
+      lyricGestureRef.current = {
+        mode: 'tap',
+        pointerId: e.pointerId,
+        startY: e.clientY,
+        index: findLyricIndexAtY(e.clientY),
+        moved: false,
+        previousPreview: currentLyricSeekPreview
+      };
+      return;
+    }
 
-    // 拖动：以相对偏移 seek（反向，拖下=往前，拖上=往后，像抓着歌词拽）
-    const startY = e.clientY;
-    const startTime = audio.currentTime;
-    const totalPixels = lineHeights.reduce((s, h) => s + h, 0) || 1;
-    const totalTime = list.length > 1 ? list[list.length - 1].time - list[0].time : 1;
-    const pxToTime = totalTime / totalPixels;
+    if (touchPointers.length === 2) {
+      const averageY =
+        (touchPointers[0].clientY + touchPointers[1].clientY) / 2;
+      lyricGestureRef.current = {
+        mode: 'two-finger',
+        startY: averageY,
+        startTime: currentLyricSeekPreview?.time ?? audio.currentTime,
+        moved: false,
+        previousPreview: currentLyricSeekPreview
+      };
+      return;
+    }
 
-    const handleMove = ev => {
-      ev.preventDefault();
-      const delta = ev.clientY - startY; // 拖下为正
-      const newTime = Math.max(0, Math.min(duration || audio.duration || 9999, startTime - delta * pxToTime));
-      audio.currentTime = newTime;
-      setCurrentTime(newTime);
-      // 同步高亮行
-      let idx = 0;
-      for (let i = 0; i < list.length; i++) {
-        if (list[i].time <= newTime) idx = i;
-        else break;
-      }
-      setActiveLyricIndex(idx);
+    if (e.pointerType === 'mouse' || e.pointerType === 'pen') {
+      lyricGestureRef.current = {
+        mode: 'tap',
+        pointerId: e.pointerId,
+        startY: e.clientY,
+        index: findLyricIndexAtY(e.clientY),
+        moved: false,
+        previousPreview: currentLyricSeekPreview
+      };
+      return;
+    }
+
+    // 超过两根手指时不猜测用户意图，整次手势作废。
+    lyricGestureRef.current = {
+      mode: 'blocked',
+      previousPreview: currentLyricSeekPreview
     };
-    const handleUp = ev => {
-      target.removeEventListener('pointermove', handleMove);
-      target.removeEventListener('pointerup', handleUp);
-      target.removeEventListener('pointercancel', handleUp);
-      if (target.releasePointerCapture && ev?.pointerId != null) {
-        try { target.releasePointerCapture(ev.pointerId); } catch { /* ignore */ }
-      }
-    };
-    target.addEventListener('pointermove', handleMove);
-    target.addEventListener('pointerup', handleUp);
-    target.addEventListener('pointercancel', handleUp);
   };
+
+  const handleLyricPointerMove = e => {
+    const pointers = lyricPointersRef.current;
+    const pointer = pointers.get(e.pointerId);
+    const gesture = lyricGestureRef.current;
+    if (!pointer || !gesture) return;
+    e.preventDefault();
+    pointer.clientY = e.clientY;
+
+    if (gesture.mode === 'tap') {
+      if (Math.abs(e.clientY - gesture.startY) > 8) gesture.moved = true;
+      return;
+    }
+
+    if (gesture.mode !== 'two-finger') return;
+    const touchPointers = [...pointers.values()].filter(
+      currentPointer => currentPointer.pointerType === 'touch'
+    );
+    if (touchPointers.length !== 2) return;
+
+    const averageY =
+      (touchPointers[0].clientY + touchPointers[1].clientY) / 2;
+    const delta = averageY - gesture.startY;
+    // 两指至少移动 14px 才进入预览，按住或轻微抖动不会触发。
+    if (!gesture.moved && Math.abs(delta) < 14) return;
+    gesture.moved = true;
+
+    const list = lyricsRef.current;
+    const totalPixels = lineHeights.reduce((sum, height) => sum + height, 0) || 1;
+    const totalTime =
+      list.length > 1 ? list[list.length - 1].time - list[0].time : 1;
+    // 像“抓住歌词”一样：手指向下拉回到更早歌词，向上推到更晚歌词。
+    previewLyricAtTime(
+      gesture.startTime - delta * (totalTime / totalPixels),
+      'two-finger'
+    );
+  };
+
+  const releaseLyricPointer = e => {
+    const pointers = lyricPointersRef.current;
+    const pointer = pointers.get(e.pointerId);
+    const gesture = lyricGestureRef.current;
+
+    if (
+      pointer
+      && gesture?.mode === 'tap'
+      && gesture.pointerId === e.pointerId
+      && !gesture.moved
+      && Math.abs(e.clientY - gesture.startY) <= 8
+    ) {
+      previewLyricAtIndex(gesture.index, 'tap');
+    }
+
+    pointers.delete(e.pointerId);
+    if (gesture?.mode === 'tap' || gesture?.mode === 'two-finger') {
+      lyricGestureRef.current = null;
+    }
+
+    const target = e.currentTarget;
+    if (target.releasePointerCapture) {
+      try { target.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+    }
+  };
+
+  const handleLyricPointerCancel = () => {
+    const previousPreview = lyricGestureRef.current?.previousPreview ?? null;
+    lyricPointersRef.current.clear();
+    lyricGestureRef.current = null;
+    setLyricSeekPreview(previousPreview);
+  };
+
+  // 触控板的双指滚动在浏览器里表现为 wheel 事件。
+  // 同样只移动候选歌词，滚动停止后等待用户明确确认。
+  const handleLyricWheel = e => {
+    const audio = audioRef.current;
+    const list = lyricsRef.current;
+    if (!audio || !list.length) return;
+    e.preventDefault();
+
+    const wheelGesture = lyricWheelGestureRef.current;
+    if (!wheelGesture.active) {
+      wheelGesture.active = true;
+      wheelGesture.startTime =
+        currentLyricSeekPreview?.time ?? audio.currentTime;
+      wheelGesture.deltaY = 0;
+    }
+
+    const normalizedDelta =
+      e.deltaMode === 1
+        ? e.deltaY * 32
+        : e.deltaMode === 2
+          ? e.deltaY * (panelHeight || 480)
+          : e.deltaY;
+    wheelGesture.deltaY += normalizedDelta;
+
+    if (Math.abs(wheelGesture.deltaY) >= 10) {
+      const totalPixels =
+        lineHeights.reduce((sum, height) => sum + height, 0) || 1;
+      const totalTime =
+        list.length > 1 ? list[list.length - 1].time - list[0].time : 1;
+      previewLyricAtTime(
+        wheelGesture.startTime
+          + wheelGesture.deltaY * (totalTime / totalPixels),
+        'wheel'
+      );
+    }
+
+    window.clearTimeout(lyricWheelEndTimerRef.current);
+    lyricWheelEndTimerRef.current = window.setTimeout(() => {
+      lyricWheelGestureRef.current = {
+        active: false,
+        startTime: 0,
+        deltaY: 0
+      };
+    }, 180);
+  };
+
+  const displayLyricIndex =
+    currentLyricSeekPreview?.index ?? activeLyricIndex;
 
   // 进度光尘只沿土星环可见的前半圈移动，避免穿过星球表面。
   const ringProgressAngle = Math.PI * (0.08 + songProgress * 0.84);
@@ -3143,12 +3094,30 @@ export default function InfiniteMenu({ items = [], scale = 1.0, audioSrc, lrcSrc
 
   return (
     <div ref={shellRef} className={`infinite-menu-shell${isPlaying ? ' is-playing' : ''}`}>
+      {activeItem && (
+        <OrbitInscription
+          item={activeItem}
+          layer="back"
+          isPlaying={isPlaying}
+          isMoving={isMoving}
+        />
+      )}
+
       <canvas id="infinite-grid-menu-canvas" ref={canvasRef} />
 
       {activeItem && (
         <div className={`planet-ring-front${isMoving ? ' inactive' : ''}`} aria-hidden="true">
           <span className="ring-progress-beacon" style={ringProgressBeaconStyle} />
         </div>
+      )}
+
+      {activeItem && (
+        <OrbitInscription
+          item={activeItem}
+          layer="front"
+          isPlaying={isPlaying}
+          isMoving={isMoving}
+        />
       )}
 
       <audio ref={audioRef} src={currentAudio || undefined} preload="auto" />
@@ -3171,25 +3140,68 @@ export default function InfiniteMenu({ items = [], scale = 1.0, audioSrc, lrcSrc
       )}
 
       {lyrics.length > 0 && (
-        <div ref={lyricsPanelRef} className={`lyrics-panel ${isMoving ? 'inactive' : 'active'}`}>
-          <div
-            className="lyrics-track"
-            style={{
-              transform: `translateY(${(panelHeight / 2 - (lineHeights.slice(0, activeLyricIndex).reduce((sum, h) => sum + h, 0) + (lineHeights[activeLyricIndex] || 0) / 2)).toFixed(1)}px)`
-            }}
-            onPointerDown={handleLyricPointerDown}
-          >
-            {lyrics.map((line, i) => (
-              <p
-                key={i}
-                ref={el => (lyricLineRefs.current[i] = el)}
-                className={`lyric-line${i === activeLyricIndex ? ' current' : Math.abs(i - activeLyricIndex) === 1 ? ' near' : ''}`}
-              >
-                {line.text || ' '}
-              </p>
-            ))}
+        <>
+          <div ref={lyricsPanelRef} className={`lyrics-panel ${isMoving ? 'inactive' : 'active'}`}>
+            <div
+              className="lyrics-track"
+              style={{
+                transform: `translateY(${(panelHeight / 2 - (lineHeights.slice(0, displayLyricIndex).reduce((sum, h) => sum + h, 0) + (lineHeights[displayLyricIndex] || 0) / 2)).toFixed(1)}px)`
+              }}
+              onPointerDown={handleLyricPointerDown}
+              onPointerMove={handleLyricPointerMove}
+              onPointerUp={releaseLyricPointer}
+              onPointerCancel={handleLyricPointerCancel}
+              onWheel={handleLyricWheel}
+              aria-label="歌词列表：点击或双指滑动预览跳转位置"
+            >
+              {lyrics.map((line, i) => (
+                <p
+                  key={i}
+                  ref={el => (lyricLineRefs.current[i] = el)}
+                  className={[
+                    'lyric-line',
+                    i === activeLyricIndex ? 'current' : '',
+                    Math.abs(i - displayLyricIndex) === 1 ? 'near' : '',
+                    i === currentLyricSeekPreview?.index ? 'pending' : ''
+                  ].filter(Boolean).join(' ')}
+                >
+                  {line.text || ' '}
+                </p>
+              ))}
+            </div>
           </div>
-        </div>
+
+          {currentLyricSeekPreview && (
+            <div
+              className={`lyric-seek-confirm${isMoving ? ' inactive' : ''}`}
+              role="group"
+              aria-label="确认歌词跳转"
+            >
+              <div className="lyric-seek-confirm-copy" aria-live="polite">
+                <span className="lyric-seek-confirm-kicker">
+                  {currentLyricSeekPreview.source === 'two-finger'
+                    ? '两指滑动预览'
+                    : currentLyricSeekPreview.source === 'wheel'
+                      ? '双指滚动预览'
+                      : '歌词跳转预览'}
+                </span>
+                <strong>
+                  <time>{formatTime(currentLyricSeekPreview.time)}</time>
+                  <span>{currentLyricSeekPreview.text || '此处为纯音乐段落'}</span>
+                </strong>
+                <small>确认后才会改变播放位置</small>
+              </div>
+              <div className="lyric-seek-confirm-actions">
+                <button type="button" onClick={cancelLyricSeek}>
+                  取消
+                </button>
+                <button type="button" className="primary" onClick={confirmLyricSeek}>
+                  跳转
+                </button>
+              </div>
+            </div>
+          )}
+        </>
       )}
 
       {currentAudio && (
@@ -3212,7 +3224,14 @@ export default function InfiniteMenu({ items = [], scale = 1.0, audioSrc, lrcSrc
                   <path d="M8 4H4v4M16 4h4v4M8 20H4v-4M16 20h4v-4" />
                 </svg>
               </button>
-              <button type="button" className="player-tool-button" aria-label="收藏" title="收藏">
+              <button
+                type="button"
+                className={`player-tool-button${isFavorite ? ' is-favorite' : ''}`}
+                aria-label={isFavorite ? '取消收藏' : '收藏'}
+                aria-pressed={isFavorite}
+                title={isFavorite ? '取消收藏' : '收藏'}
+                onClick={handleFavoriteToggle}
+              >
                 <svg viewBox="0 0 24 24" fill="none">
                   <path d="M20.8 4.7a5.5 5.5 0 0 0-7.8 0L12 5.8l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.8-8.5a5.5 5.5 0 0 0 0-7.8Z" />
                 </svg>

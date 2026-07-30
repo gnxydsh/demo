@@ -3,6 +3,10 @@
 :root {
   --background: #ffffff;
   --foreground: #171717;
+  --font-geist-sans:
+    "Avenir Next", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+  --font-geist-mono:
+    "SFMono-Regular", "Cascadia Code", "Roboto Mono", monospace;
 }
 
 @theme inline {

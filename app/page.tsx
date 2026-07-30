@@ -3,6 +3,7 @@
 import { useCallback, useRef, useState, type CSSProperties } from "react";
 import InfiniteMenu from "@/components/InfiniteMenu";
 import Galaxy from "@/components/Galaxy";
+import MagneticDiscovery from "@/components/MagneticDiscovery";
 import styles from "./page.module.css";
 
 const items = [
@@ -43,11 +44,33 @@ const items = [
   },
 ];
 
+type PlaybackDetail = {
+  currentTime: number;
+  duration: number;
+  progress: number;
+  title: string;
+  artist: string;
+  lyric: string;
+};
+
+const EMPTY_PLAYBACK_DETAIL: PlaybackDetail = {
+  currentTime: 0,
+  duration: 0,
+  progress: 0,
+  title: '',
+  artist: '',
+  lyric: '',
+};
+
 export default function Home() {
   const sceneRef = useRef<HTMLElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [hue, setHue] = useState(140);
   const [isMoving, setIsMoving] = useState(false);
+  const [isFavorite, setIsFavorite] = useState(false);
+  const [playbackDetail, setPlaybackDetail] = useState(
+    EMPTY_PLAYBACK_DETAIL,
+  );
   const handleProgressChange = useCallback((progress: number) => {
     sceneRef.current?.style.setProperty("--song-progress", String(progress));
   }, []);
@@ -119,8 +142,18 @@ export default function Home() {
           onColorChange={setHue}
           onMovementChange={setIsMoving}
           onProgressChange={handleProgressChange}
+          onPlaybackDetailChange={setPlaybackDetail}
+          onFavoriteChange={setIsFavorite}
         />
       </div>
+
+      <MagneticDiscovery
+        isPlaying={isPlaying}
+        isMoving={isMoving}
+        isFavorite={isFavorite}
+        playbackDetail={playbackDetail}
+        songCatalog={items.map(({ title, artist }) => ({ title, artist }))}
+      />
     </main>
   );
 }

@@ -18,6 +18,65 @@
   outline: none;
 }
 
+.orbit-inscription {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: min(148vh, 88vw);
+  aspect-ratio: 7.5 / 1;
+  overflow: visible;
+  pointer-events: none;
+  transform: translate(-50%, -50%) rotate(-11deg);
+  transition:
+    opacity 0.35s ease,
+    filter 0.35s ease;
+}
+
+.orbit-inscription text {
+  font-family: var(--font-geist-mono), "Arial Narrow", sans-serif;
+  font-weight: 520;
+  font-variation-settings: "wght" 520;
+  text-transform: uppercase;
+}
+
+/* 背面铭文位于 WebGL 画布之下，主星会自然遮住它。 */
+.orbit-inscription-back {
+  z-index: 0;
+  opacity: 0.26;
+  filter:
+    blur(0.28px)
+    drop-shadow(0 0 7px hsl(var(--accent-hue) 86% 70% / 0.24));
+}
+
+.orbit-inscription-back text {
+  font-size: 13px;
+  letter-spacing: 0.2em;
+  fill: hsl(calc(var(--accent-hue) + 26) 58% 76% / 0.62);
+}
+
+/* 前面铭文压在星环上方，亮度略高，但不会做成一整条大白字。 */
+.orbit-inscription-front {
+  z-index: 3;
+  opacity: 0.68;
+  filter:
+    drop-shadow(0 1px 2px rgba(0, 0, 0, 0.86))
+    drop-shadow(0 0 8px hsl(var(--accent-hue) 92% 76% / 0.28));
+}
+
+.orbit-inscription-front text {
+  font-size: 30px;
+  font-weight: 640;
+  font-variation-settings: "wght" 640;
+  letter-spacing: 0.12em;
+  fill: hsl(var(--accent-hue) 90% 91% / 0.86);
+}
+
+.orbit-inscription.inactive {
+  visibility: hidden;
+  opacity: 0;
+  transition: none;
+}
+
 .planet-ring-front {
   --ring-band-width: calc(
     18px
@@ -152,7 +211,7 @@
   margin: 0;
   max-width: 26vw;
   font-family: var(--font-geist-mono), "Arial Narrow", sans-serif;
-  font-size: clamp(2.2rem, 3.9vw, 4.5rem);
+  font-size: clamp(1.9rem, 3.25vw, 3.8rem);
   font-style: oblique 9deg;
   font-weight: 650;
   font-variation-settings: "wght" 650;
@@ -204,12 +263,19 @@
 }
 
 .face-title.active {
-  opacity: 1;
+  opacity: 0.82;
   transform: translate(0, -115%);
   pointer-events: auto;
   transition:
     opacity 0.5s ease,
     transform 0.5s ease;
+}
+
+.face-title.inactive,
+.face-artist.inactive {
+  opacity: 0;
+  pointer-events: none;
+  transition: none;
 }
 
 .face-artist {
@@ -368,6 +434,147 @@
     0 0 38px hsl(calc(var(--accent-hue) + 38) 88% 72% / 0.13);
 }
 
+.lyric-line.pending {
+  border-right-color: hsl(calc(var(--accent-hue) + 38) 92% 84% / 0.94);
+  background:
+    linear-gradient(
+      90deg,
+      transparent 4%,
+      hsl(var(--accent-hue) 76% 60% / 0.13) 66%,
+      hsl(calc(var(--accent-hue) + 38) 90% 74% / 0.18) 100%
+    );
+  font-size: clamp(1.28rem, 1.42vw, 1.72rem);
+  font-weight: 650;
+  color: rgba(255, 255, 255, 0.98);
+  transform: translateX(-0.8rem);
+  text-shadow:
+    0 2px 20px rgba(0, 0, 0, 0.76),
+    0 0 22px hsl(calc(var(--accent-hue) + 38) 90% 78% / 0.3);
+}
+
+.lyric-line {
+  position: relative;
+}
+
+.lyric-seek-confirm {
+  position: absolute;
+  z-index: 7;
+  top: calc(50% + 5.6rem);
+  right: 3%;
+  width: min(32rem, calc(50vw - 3vw - 34vh));
+  min-width: 17rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  box-sizing: border-box;
+  padding: 0.72rem 0.78rem 0.72rem 0.92rem;
+  border: 1px solid hsl(var(--accent-hue) 78% 76% / 0.22);
+  border-radius: 0.85rem;
+  color: #ffffff;
+  background:
+    radial-gradient(
+      ellipse at 100% 0%,
+      hsl(calc(var(--accent-hue) + 38) 76% 62% / 0.13),
+      transparent 58%
+    ),
+    rgba(5, 7, 15, 0.88);
+  box-shadow:
+    0 16px 38px rgba(0, 0, 0, 0.46),
+    inset 0 1px 0 rgba(255, 255, 255, 0.055);
+  -webkit-backdrop-filter: blur(18px);
+  backdrop-filter: blur(18px);
+  opacity: 1;
+  transform: translateY(0);
+  transition:
+    opacity 0.22s ease,
+    transform 0.32s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.lyric-seek-confirm.inactive {
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(8px);
+}
+
+.lyric-seek-confirm-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.18rem;
+}
+
+.lyric-seek-confirm-kicker {
+  font-size: 0.62rem;
+  font-weight: 620;
+  letter-spacing: 0.12em;
+  color: hsl(calc(var(--accent-hue) + 32) 82% 84% / 0.76);
+}
+
+.lyric-seek-confirm-copy strong {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 0.55rem;
+  font-size: 0.78rem;
+  font-weight: 620;
+}
+
+.lyric-seek-confirm-copy time {
+  flex: 0 0 auto;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.7rem;
+  color: hsl(var(--accent-hue) 88% 86% / 0.9);
+}
+
+.lyric-seek-confirm-copy strong span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lyric-seek-confirm-copy small {
+  font-size: 0.62rem;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.lyric-seek-confirm-actions {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 0.42rem;
+}
+
+.lyric-seek-confirm-actions button {
+  min-width: 3.5rem;
+  padding: 0.46rem 0.62rem;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 999px;
+  color: rgba(255, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.045);
+  cursor: pointer;
+  transition:
+    color 0.18s ease,
+    border-color 0.18s ease,
+    background 0.18s ease,
+    transform 0.18s ease;
+}
+
+.lyric-seek-confirm-actions button:hover {
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.26);
+  background: rgba(255, 255, 255, 0.09);
+}
+
+.lyric-seek-confirm-actions button:active {
+  transform: scale(0.96);
+}
+
+.lyric-seek-confirm-actions .primary {
+  border-color: hsl(var(--accent-hue) 86% 80% / 0.36);
+  color: #ffffff;
+  background: hsl(var(--accent-hue) 74% 52% / 0.22);
+}
+
 /* ---------- 底部：播放器（控制按钮行 + 进度条行） ---------- */
 
 .player-bar {
@@ -516,6 +723,17 @@
 
 .player-tool-button:active {
   transform: scale(0.94);
+}
+
+.player-tool-button.is-favorite {
+  border-color: rgba(255, 126, 171, 0.38);
+  color: #ff8db5;
+  background: rgba(255, 92, 146, 0.1);
+  box-shadow: 0 0 16px rgba(255, 92, 146, 0.18);
+}
+
+.player-tool-button.is-favorite svg {
+  fill: currentColor;
 }
 
 .player-tool-button svg {
@@ -904,12 +1122,18 @@ input:focus-visible {
     height: min(28rem, 54vh);
   }
 
+  .lyric-seek-confirm {
+    right: 2%;
+    width: 26vw;
+  }
+
   .lyric-line {
     padding-block: 0.46rem;
     font-size: 0.9rem;
   }
 
-  .lyric-line.current {
+  .lyric-line.current,
+  .lyric-line.pending {
     font-size: 1.16rem;
   }
 
@@ -931,7 +1155,8 @@ input:focus-visible {
 @media (max-width: 1180px) {
   .face-title,
   .face-artist,
-  .lyrics-panel {
+  .lyrics-panel,
+  .lyric-seek-confirm {
     display: none;
   }
 
