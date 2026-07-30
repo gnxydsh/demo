@@ -1630,11 +1630,13 @@ class InfiniteGridMenu {
             const img = new Image();
             img.crossOrigin = 'anonymous';
             img.onload = () => resolve(img);
+            img.onerror = () => resolve(null);
             img.src = item.image;
           })
       )
     ).then(images => {
       images.forEach((img, i) => {
+        if (!img) return;
         const x = (i % this.atlasSize) * cellSize;
         const y = Math.floor(i / this.atlasSize) * cellSize;
         ctx.drawImage(img, x, y, cellSize, cellSize);
@@ -2718,8 +2720,10 @@ export default function InfiniteMenu({
     if (!audio) return;
     if (audio.paused) {
       startAudioAnalysis();
-      audio.play();
-      setIsPlaying(true);
+      audio
+        .play()
+        .then(() => setIsPlaying(true))
+        .catch(() => setIsPlaying(false));
     } else {
       audio.pause();
       setIsPlaying(false);
