@@ -240,8 +240,12 @@ export default function Galaxy({
     let program;
 
     function resize() {
-      const scale = 1;
+      // 星空是全屏柔光背景，不需要与前景唱片同等像素密度。
+      // 降低内部绘制尺寸后仍用 CSS 铺满容器，明显减少每帧片元计算。
+      const scale = 0.82;
       renderer.setSize(ctn.offsetWidth * scale, ctn.offsetHeight * scale);
+      gl.canvas.style.width = '100%';
+      gl.canvas.style.height = '100%';
       if (program) {
         program.uniforms.uResolution.value = new Color(
           gl.canvas.width,
@@ -286,6 +290,7 @@ export default function Galaxy({
 
     const mesh = new Mesh(gl, { geometry, program });
     let animateId;
+    let lastRenderAt = 0;
 
     function update(t) {
       animateId = requestAnimationFrame(update);
@@ -320,6 +325,10 @@ export default function Galaxy({
       const recedeLerp = targetRecede > curRecede ? 0.12 : 0.04;
       program.uniforms.uRecede.value = curRecede + (targetRecede - curRecede) * recedeLerp;
 
+      // 抓取期间前景和手势识别更重要；背景限制到 30fps，把 GPU 时间让给主星球。
+      const minRenderInterval = targetRecede > 0.02 ? 1000 / 30 : 0;
+      if (minRenderInterval && t - lastRenderAt < minRenderInterval) return;
+      lastRenderAt = t;
       renderer.render({ scene: mesh });
     }
     animateId = requestAnimationFrame(update);

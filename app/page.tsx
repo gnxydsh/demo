@@ -1,8 +1,9 @@
 'use client';
 
-import { useState } from "react";
+import { useCallback, useRef, useState, type CSSProperties } from "react";
 import InfiniteMenu from "@/components/InfiniteMenu";
 import Galaxy from "@/components/Galaxy";
+import styles from "./page.module.css";
 
 const items = [
   {
@@ -43,36 +44,83 @@ const items = [
 ];
 
 export default function Home() {
+  const sceneRef = useRef<HTMLElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [hue, setHue] = useState(140);
-  const [pressed, setPressed] = useState(false);
+  const [isMoving, setIsMoving] = useState(false);
+  const handleProgressChange = useCallback((progress: number) => {
+    sceneRef.current?.style.setProperty("--song-progress", String(progress));
+  }, []);
 
   return (
-    <div style={{ height: "100vh", position: "relative" }}>
-      <div
-        style={{
-          position: "absolute",
-          inset: 0,
-          zIndex: 0,
-          pointerEvents: "none",
-        }}
-      >
+    <main
+      ref={sceneRef}
+      className={`${styles.playerScene}${isPlaying ? ` ${styles.isPlaying}` : ""}${isMoving ? ` ${styles.isMoving}` : ""}`}
+      style={{ "--accent-hue": hue, "--song-progress": 0 } as CSSProperties}
+    >
+      <div className={styles.nebula} aria-hidden="true" />
+      <div className={styles.auroraVeil} aria-hidden="true" />
+
+      <div className={styles.galaxyLayer} aria-hidden="true">
         <Galaxy
-          disableAnimation={!isPlaying}
+          disableAnimation={false}
           hueShift={hue}
-          saturation={0.7}
+          saturation={0.68}
           mouseInteraction={false}
           mouseRepulsion={false}
-          density={1.2}
-          glowIntensity={0.4}
-          twinkleIntensity={0.4}
-          rotationSpeed={0.05}
-          recede={pressed ? 1 : 0}
+          density={0.7}
+          glowIntensity={0.27}
+          twinkleIntensity={0.3}
+          rotationSpeed={0.035}
+          recede={isMoving ? 1 : 0}
         />
       </div>
-      <div style={{ position: "relative", zIndex: 1, width: "100%", height: "100%" }}>
-        <InfiniteMenu items={items} onPlayingChange={setIsPlaying} onColorChange={setHue} onMovementChange={setPressed} />
+
+      <div className={styles.cosmicStrata} aria-hidden="true" />
+
+      <svg
+        className={styles.constellationLayer}
+        viewBox="0 0 1600 1000"
+        preserveAspectRatio="xMidYMid slice"
+        aria-hidden="true"
+        focusable="false"
+      >
+        <g className={styles.constellationLines}>
+          <path d="M96 190 L184 126 L278 174 L340 104 L418 158" />
+          <path d="M184 126 L212 230 L278 174 L326 260" />
+          <path d="M1212 744 L1284 676 L1360 724 L1438 646 L1510 704" />
+          <path d="M1284 676 L1320 816 L1360 724 L1448 806" />
+        </g>
+        <g className={styles.constellationNodes}>
+          <circle cx="96" cy="190" r="3" />
+          <circle cx="184" cy="126" r="5" />
+          <circle cx="278" cy="174" r="3.5" />
+          <circle cx="340" cy="104" r="4.5" />
+          <circle cx="418" cy="158" r="2.5" />
+          <circle cx="212" cy="230" r="2.5" />
+          <circle cx="326" cy="260" r="3" />
+          <circle cx="1212" cy="744" r="3" />
+          <circle cx="1284" cy="676" r="4.5" />
+          <circle cx="1360" cy="724" r="3" />
+          <circle cx="1438" cy="646" r="5" />
+          <circle cx="1510" cy="704" r="2.5" />
+          <circle cx="1320" cy="816" r="2.5" />
+          <circle cx="1448" cy="806" r="3.5" />
+        </g>
+      </svg>
+
+      <div className={styles.starScrim} aria-hidden="true" />
+      <div className={styles.discAura} aria-hidden="true" />
+
+      <div className={styles.playerLayer}>
+        <InfiniteMenu
+          items={items}
+          onPlayingChange={setIsPlaying}
+          onColorChange={setHue}
+          onMovementChange={setIsMoving}
+          onProgressChange={handleProgressChange}
+        />
       </div>
-    </div>
+    </main>
   );
 }

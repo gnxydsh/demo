@@ -1,4 +1,11 @@
-/* Note: this CSS is only an example, you can overlay whatever you want using the activeItem logic */
+.infinite-menu-shell {
+  --audio-bass: 0;
+  --audio-mid: 0;
+  --audio-treble: 0;
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
 
 /* 光标由组件 JS 根据是否位于中央圆形区域动态控制 */
 #infinite-grid-menu-canvas {
@@ -6,7 +13,133 @@
   height: 100%;
   overflow: hidden;
   position: relative;
+  z-index: 1;
+  display: block;
   outline: none;
+}
+
+.planet-ring-front {
+  --ring-band-width: calc(
+    18px
+    + var(--song-progress, 0) * 42px
+    + var(--audio-bass, 0) * 9px
+  );
+  position: absolute;
+  z-index: 2;
+  left: 50%;
+  top: 50%;
+  width: min(148vh, 88vw);
+  aspect-ratio: 7.5 / 1;
+  pointer-events: none;
+  border: 2px solid hsl(var(--accent-hue) 94% 86% / 0.76);
+  border-radius: 50%;
+  box-shadow:
+    0 7px 22px hsl(var(--accent-hue) 92% 68% / 0.24),
+    inset 0 -6px 16px hsl(calc(var(--accent-hue) + 36) 92% 78% / 0.18);
+  opacity: calc(0.66 + var(--song-progress, 0) * 0.24);
+  transform: translate(-50%, -50%) rotate(-11deg);
+  -webkit-mask: linear-gradient(to bottom, transparent 0 51%, #000 58% 100%);
+  mask: linear-gradient(to bottom, transparent 0 51%, #000 58% 100%);
+  transition: opacity 0.35s ease;
+}
+
+.planet-ring-front::after {
+  position: absolute;
+  z-index: 1;
+  inset: -2px;
+  content: "";
+  border-radius: inherit;
+  background:
+    linear-gradient(
+      90deg,
+      transparent 0%,
+      rgba(123, 103, 66, 0.16) 10%,
+      hsl(var(--accent-hue) 66% 68% / 0.32) 34%,
+      rgba(232, 208, 145, 0.72) 53%,
+      rgba(168, 139, 82, 0.34) 76%,
+      hsl(var(--accent-hue) 62% 62% / 0.14) 90%,
+      transparent 100%
+    ),
+    repeating-radial-gradient(
+      ellipse closest-side at center,
+      rgba(86, 70, 45, 0.30) 0 3px,
+      rgba(188, 158, 96, 0.48) 3px 6px,
+      rgba(104, 85, 54, 0.22) 6px 9px,
+      rgba(231, 207, 148, 0.54) 9px 11px,
+      rgba(137, 112, 69, 0.32) 11px 15px
+    );
+  background-blend-mode: screen;
+  -webkit-mask: radial-gradient(
+    ellipse closest-side at center,
+    transparent 0 calc(100% - var(--ring-band-width)),
+    #000 calc(100% - var(--ring-band-width) + 1px) 100%
+  );
+  mask: radial-gradient(
+    ellipse closest-side at center,
+    transparent 0 calc(100% - var(--ring-band-width)),
+    #000 calc(100% - var(--ring-band-width) + 1px) 100%
+  );
+  filter:
+    brightness(calc(1 + var(--audio-mid, 0) * 0.2))
+    drop-shadow(0 0 8px rgba(223, 197, 133, 0.34))
+    drop-shadow(0 10px 18px rgba(0, 0, 0, 0.42));
+}
+
+.planet-ring-front::before {
+  position: absolute;
+  z-index: 0;
+  inset: -2px;
+  content: "";
+  border-radius: inherit;
+  background: repeating-conic-gradient(
+    from 11deg,
+    transparent 0deg 4.8deg,
+    hsl(var(--accent-hue) 82% 82% / 0.38) 5deg 5.35deg,
+    transparent 5.55deg 9.6deg
+  );
+  -webkit-mask: radial-gradient(
+    ellipse closest-side at center,
+    transparent 0 calc(100% - var(--ring-band-width)),
+    #000 calc(100% - var(--ring-band-width) + 1px) 100%
+  );
+  mask: radial-gradient(
+    ellipse closest-side at center,
+    transparent 0 calc(100% - var(--ring-band-width)),
+    #000 calc(100% - var(--ring-band-width) + 1px) 100%
+  );
+  opacity: calc(
+    0.08
+    + var(--audio-mid, 0) * 0.18
+    + var(--audio-treble, 0) * 0.12
+  );
+  filter: blur(0.25px);
+}
+
+.ring-progress-beacon {
+  position: absolute;
+  z-index: 2;
+  width: calc(5px + var(--audio-bass, 0) * 4px);
+  height: calc(5px + var(--audio-bass, 0) * 4px);
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  border-radius: 50%;
+  background: hsl(var(--accent-hue) 96% 88%);
+  box-shadow:
+    0 0 calc(8px + var(--audio-bass, 0) * 14px) hsl(var(--accent-hue) 96% 78% / 0.82),
+    0 0 calc(18px + var(--audio-mid, 0) * 22px) hsl(calc(var(--accent-hue) + 32) 94% 72% / 0.42);
+  opacity: calc(0.58 + var(--audio-mid, 0) * 0.32);
+  transform: translate(-50%, -50%);
+  transition:
+    left 0.3s linear,
+    top 0.3s linear,
+    width 0.12s ease-out,
+    height 0.12s ease-out,
+    opacity 0.12s ease-out;
+}
+
+.planet-ring-front.inactive {
+  opacity: 0;
+  visibility: hidden;
+  transition: none;
 }
 
 /* ---------- 左侧：歌曲信息 ---------- */
@@ -17,17 +150,57 @@
   top: 50%;
   left: 8%;
   margin: 0;
-  font-size: clamp(2.5rem, 5vw, 4rem);
-  font-weight: 800;
-  letter-spacing: -0.02em;
+  max-width: 26vw;
+  font-family: var(--font-geist-mono), "Arial Narrow", sans-serif;
+  font-size: clamp(2.2rem, 3.9vw, 4.5rem);
+  font-style: oblique 9deg;
+  font-weight: 650;
+  font-variation-settings: "wght" 650;
+  line-height: 0.92;
+  letter-spacing: -0.055em;
+  text-transform: uppercase;
   color: #ffffff;
-  text-shadow: 0 2px 30px rgba(0, 0, 0, 0.7);
+  text-wrap: balance;
+  -webkit-text-stroke: 0.2px rgba(255, 255, 255, 0.7);
+  text-shadow:
+    0 2px 32px rgba(0, 0, 0, 0.72),
+    0 0 28px hsl(var(--accent-hue) 86% 82% / 0.12);
   transform: translate(-8%, -115%);
   opacity: 0;
   pointer-events: none;
+  z-index: 3;
   transition:
     opacity 0.15s ease,
     transform 0.15s ease;
+}
+
+.face-title::before {
+  position: absolute;
+  left: 0.08em;
+  top: -0.3em;
+  width: 1.55em;
+  height: 2px;
+  content: "";
+  background: linear-gradient(
+    90deg,
+    hsl(var(--accent-hue) 94% 82% / 0.88),
+    hsl(calc(var(--accent-hue) + 42) 96% 88% / 0.18),
+    transparent
+  );
+  box-shadow: 0 0 12px hsl(var(--accent-hue) 92% 74% / 0.42);
+  transform: skewX(-32deg);
+}
+
+.face-title::after {
+  position: absolute;
+  inset: 0;
+  content: attr(data-title);
+  color: transparent;
+  -webkit-text-stroke: 0.8px hsl(calc(var(--accent-hue) + 36) 92% 86% / 0.42);
+  clip-path: inset(58% -4% 13% -4%);
+  opacity: 0.56;
+  transform: translate(0.075em, 0.055em);
+  pointer-events: none;
 }
 
 .face-title.active {
@@ -45,14 +218,18 @@
   top: 50%;
   left: 8%;
   margin: 0;
-  font-size: 1rem;
-  font-weight: 500;
-  letter-spacing: 0.28em;
+  max-width: 25vw;
+  font-family: var(--font-geist-mono), "Arial Narrow", sans-serif;
+  font-size: 0.78rem;
+  font-style: oblique 7deg;
+  font-weight: 520;
+  letter-spacing: 0.32em;
   text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.55);
+  color: rgba(255, 255, 255, 0.5);
   transform: translate(-8%, 0.4em);
   opacity: 0;
   pointer-events: none;
+  z-index: 3;
   transition:
     opacity 0.15s ease,
     transform 0.15s ease;
@@ -73,22 +250,68 @@
   user-select: none;
   position: absolute;
   top: 50%;
-  right: 2.5%;
+  right: 3%;
   /*
-    宽度上限 34rem（可读性），且左边界不得越过中央圆形唱片：
-    唱片右边缘约在 50% + 35vh 处，留 3vh 间隙后用 38vh 作为禁区。
-    可用宽度 = 视口右半部分(50vw) - 右侧留白(2.5vw) - 唱片禁区(38vh)，
+    宽度上限 36rem，且左边界不得越过中央音乐星球：
+    唱片右边缘约在 50% + 31vh 处，额外保留 3vh 间隙。
+    可用宽度 = 视口右半部分 - 右侧留白 - 星球禁区，
     超出该宽度的长句由 .lyric-line 的 white-space:normal 自动换行多行显示。
   */
-  width: min(34rem, calc(50vw - 2.5vw - 38vh));
-  height: 16rem;
+  width: min(36rem, calc(50vw - 3vw - 34vh));
+  height: min(34rem, 58vh);
   overflow: hidden;
   text-align: right;
   transform: translateY(-50%);
-  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 22%, #000 78%, transparent);
-  mask-image: linear-gradient(to bottom, transparent, #000 22%, #000 78%, transparent);
+  background:
+    radial-gradient(ellipse at 100% 50%, hsl(var(--accent-hue) 72% 52% / 0.1), transparent 58%),
+    linear-gradient(90deg, transparent 10%, rgba(5, 7, 15, 0.08) 42%, rgba(5, 7, 15, 0.34) 100%);
+  border-right: 1px solid hsl(var(--accent-hue) 86% 76% / 0.18);
+  box-shadow:
+    inset -28px 0 44px hsl(var(--accent-hue) 64% 30% / 0.07),
+    22px 0 48px rgba(0, 0, 0, 0.2);
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 12%, #000 88%, transparent);
+  mask-image: linear-gradient(to bottom, transparent, #000 12%, #000 88%, transparent);
   opacity: 1;
+  z-index: 3;
   transition: opacity 0.5s ease;
+}
+
+.lyrics-panel::before {
+  position: absolute;
+  z-index: 0;
+  top: 50%;
+  right: 0;
+  width: 100%;
+  height: 5.4rem;
+  content: '';
+  border-right: 2px solid hsl(var(--accent-hue) 92% 82% / 0.72);
+  background: linear-gradient(
+    90deg,
+    transparent 2%,
+    hsl(var(--accent-hue) 78% 56% / 0.025) 42%,
+    hsl(calc(var(--accent-hue) + 38) 88% 70% / 0.13) 100%
+  );
+  box-shadow:
+    18px 0 34px hsl(var(--accent-hue) 88% 62% / 0.18),
+    inset -18px 0 28px hsl(calc(var(--accent-hue) + 42) 88% 70% / 0.08);
+  transform: translateY(-50%);
+}
+
+.lyrics-panel::after {
+  position: absolute;
+  z-index: 2;
+  top: 50%;
+  right: -3px;
+  width: 7px;
+  height: 7px;
+  content: '';
+  border: 1px solid rgba(255, 255, 255, 0.86);
+  border-radius: 50%;
+  background: hsl(var(--accent-hue) 92% 78%);
+  box-shadow:
+    0 0 10px hsl(var(--accent-hue) 94% 72% / 0.9),
+    0 0 24px hsl(calc(var(--accent-hue) + 38) 94% 72% / 0.55);
+  transform: translateY(-50%);
 }
 
 .lyrics-panel.inactive {
@@ -98,30 +321,48 @@
 }
 
 .lyrics-track {
-  transition: transform 0.45s ease;
+  position: relative;
+  z-index: 1;
+  padding-right: 1.2rem;
+  transition: transform 0.55s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .lyric-line {
   margin: 0;
-  padding: 0.35rem 0;
-  font-size: 1.05rem;
-  font-weight: 500;
-  line-height: 1.45;
-  letter-spacing: 0.02em;
+  padding: 0.58rem 1.15rem 0.58rem 0.8rem;
+  border-right: 1px solid transparent;
+  border-radius: 0.25rem 0 0 0.25rem;
+  font-size: clamp(1.02rem, 1.08vw, 1.28rem);
+  font-weight: 440;
+  line-height: 1.52;
+  letter-spacing: 0.025em;
   /* 长句自动换行，不再单行截断 */
   white-space: normal;
-  color: rgba(255, 255, 255, 0.32);
-  transition: color 0.35s ease;
+  color: rgba(255, 255, 255, 0.2);
+  transition:
+    color 0.35s ease,
+    transform 0.45s cubic-bezier(0.22, 1, 0.36, 1),
+    font-size 0.35s ease,
+    background 0.35s ease,
+    border-color 0.35s ease,
+    opacity 0.35s ease;
 }
 
 .lyric-line.near {
-  color: rgba(255, 255, 255, 0.55);
+  color: rgba(255, 255, 255, 0.48);
 }
 
 .lyric-line.current {
-  font-weight: 700;
+  border-right-color: hsl(var(--accent-hue) 92% 82% / 0.74);
+  background: linear-gradient(90deg, transparent 8%, hsl(var(--accent-hue) 72% 58% / 0.09) 100%);
+  font-size: clamp(1.28rem, 1.42vw, 1.72rem);
+  font-weight: 650;
   color: #ffffff;
-  text-shadow: 0 2px 20px rgba(0, 0, 0, 0.7);
+  transform: translateX(-0.8rem);
+  text-shadow:
+    0 2px 20px rgba(0, 0, 0, 0.7),
+    0 0 20px hsl(var(--accent-hue) 86% 82% / 0.22),
+    0 0 38px hsl(calc(var(--accent-hue) + 38) 88% 72% / 0.13);
 }
 
 /* ---------- 底部：播放器（控制按钮行 + 进度条行） ---------- */
@@ -129,9 +370,9 @@
 .player-bar {
   position: absolute;
   left: 50%;
-  bottom: 1.2rem;
+  bottom: max(1rem, env(safe-area-inset-bottom));
   transform: translateX(-50%);
-  width: min(42rem, 60vw);
+  width: min(116rem, calc(100% - clamp(2rem, 5vw, 6rem)));
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -152,22 +393,208 @@
     transform 0.15s ease;
 }
 
-/* 控制按钮行：播放模式 / 上一曲 / 播放 / 下一曲 / 音量 */
+.player-now-playing {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: min(34rem, 100%);
+  min-width: 0;
+  gap: 0.55rem;
+  color: rgba(255, 255, 255, 0.94);
+  font-size: 0.78rem;
+  line-height: 1.2;
+  letter-spacing: 0.01em;
+  text-shadow: 0 1px 16px rgba(0, 0, 0, 0.72);
+}
+
+.player-state-dot {
+  width: 5px;
+  height: 5px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.34);
+  transition:
+    background 0.3s ease,
+    box-shadow 0.3s ease,
+    transform 0.3s ease;
+}
+
+.player-state-dot.on {
+  background: #ffffff;
+  box-shadow:
+    0 0 8px rgba(255, 255, 255, 0.72),
+    0 0 18px rgba(255, 255, 255, 0.34);
+  transform: scale(1.15);
+}
+
+.player-now-title,
+.player-now-artist {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.player-now-title {
+  max-width: 18rem;
+  font-weight: 620;
+}
+
+.player-now-artist {
+  max-width: 14rem;
+  color: rgba(255, 255, 255, 0.46);
+  font-weight: 430;
+}
+
+.player-now-divider {
+  width: 1px;
+  height: 0.75rem;
+  flex: 0 0 auto;
+  background: rgba(255, 255, 255, 0.22);
+}
+
+/* 三段式布局只负责摆放新增按钮，视觉继续沿用原播放器的圆润玻璃风格 */
+.player-command-row {
+  position: relative;
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(14rem, 1fr) auto minmax(17rem, 1fr);
+  align-items: center;
+  gap: clamp(1rem, 3vw, 4rem);
+}
+
+.player-command-row::before {
+  display: none;
+}
+
+.player-utility-group {
+  display: flex;
+  align-items: center;
+  width: max-content;
+  gap: 0.5rem;
+  padding: 0;
+}
+
+.player-utility-left {
+  justify-self: start;
+}
+
+.player-utility-right {
+  justify-self: end;
+}
+
+.player-tool-button {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 50%;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.52);
+  cursor: pointer;
+  transition:
+    color 0.2s ease,
+    border-color 0.2s ease,
+    background 0.2s ease,
+    box-shadow 0.2s ease,
+    transform 0.2s ease;
+}
+
+.player-tool-button:hover {
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.045);
+  color: #ffffff;
+  box-shadow: none;
+  transform: scale(1.08);
+}
+
+.player-tool-button:active {
+  transform: scale(0.94);
+}
+
+.player-tool-button svg {
+  width: 1.25rem;
+  height: 1.25rem;
+  stroke: currentColor;
+  stroke-width: 1.65;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.player-tool-button.text-tool {
+  border-color: rgba(255, 255, 255, 0.18);
+  font-size: 0.66rem;
+  font-weight: 760;
+  letter-spacing: 0.04em;
+}
+
+.player-tool-button.lyrics-tool {
+  font-size: 0.78rem;
+}
+
+.player-tool-button.has-badge {
+  margin-right: 0.35rem;
+}
+
+.player-tool-badge {
+  position: absolute;
+  left: 1.55rem;
+  top: -0.18rem;
+  padding: 0 0.22rem;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 0.45rem;
+  line-height: 1.2;
+  letter-spacing: 0;
+}
+
+.player-tool-button.effects-tool {
+  overflow: visible;
+}
+
+.player-tool-button.effects-tool svg {
+  width: 1.4rem;
+}
+
+.player-tool-micro {
+  position: absolute;
+  right: -0.18rem;
+  top: 0.08rem;
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 0.4rem;
+  font-weight: 760;
+  letter-spacing: 0;
+}
+
+/* 原有中央播放核心 */
 .player-controls {
   display: flex;
   align-items: center;
-  gap: 1.4rem;
+  justify-content: center;
+  min-height: auto;
+  gap: 1.15rem;
+  padding: 0.35rem 0.65rem;
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 999px;
+  background: rgba(8, 9, 16, 0.46);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.07),
+    0 12px 36px rgba(0, 0, 0, 0.24);
+  -webkit-backdrop-filter: blur(14px) saturate(125%);
+  backdrop-filter: blur(14px) saturate(125%);
 }
 
 .player-icon-button {
   display: grid;
   place-items: center;
-  width: 30px;
-  height: 30px;
+  width: 32px;
+  height: 32px;
   padding: 0;
   border: none;
   background: transparent;
-  color: rgba(255, 255, 255, 0.6);
+  color: rgba(255, 255, 255, 0.52);
   cursor: pointer;
   transition:
     color 0.2s ease,
@@ -182,7 +609,8 @@
 
 .player-icon-button:hover {
   color: #ffffff;
-  transform: scale(1.12);
+  filter: none;
+  transform: scale(1.08);
 }
 
 .player-icon-button:active {
@@ -192,25 +620,32 @@
 /* 单曲循环 / 随机播放激活态常亮 */
 .player-icon-button.on {
   color: #ffffff;
+  filter: drop-shadow(0 0 7px rgba(255, 255, 255, 0.24));
 }
 
 .player-play-button {
   display: grid;
   place-items: center;
-  width: 52px;
-  height: 52px;
+  width: 48px;
+  height: 48px;
   padding: 0;
-  border: none;
   border-radius: 50%;
-  background: transparent;
-  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  background: rgba(255, 255, 255, 0.95);
+  color: #080910;
+  box-shadow:
+    0 0 0 5px rgba(255, 255, 255, 0.035),
+    0 6px 22px rgba(0, 0, 0, 0.28);
   cursor: pointer;
-  transition: transform 0.2s ease;
+  transition:
+    transform 0.2s ease,
+    box-shadow 0.2s ease,
+    background 0.2s ease;
 }
 
 .player-play-button svg {
-  width: 26px;
-  height: 26px;
+  width: 23px;
+  height: 23px;
   fill: currentColor;
 }
 
@@ -220,7 +655,11 @@
 }
 
 .player-play-button:hover {
-  transform: scale(1.08);
+  background: #ffffff;
+  box-shadow:
+    0 0 0 6px rgba(255, 255, 255, 0.055),
+    0 8px 28px rgba(0, 0, 0, 0.32);
+  transform: scale(1.045);
 }
 
 .player-play-button:active {
@@ -278,7 +717,7 @@
 
 /* 进度条行：时间在轨道两侧 */
 .player-progress {
-  width: 100%;
+  width: min(54rem, 64vw);
   display: flex;
   align-items: center;
   gap: 0.8rem;
@@ -288,7 +727,7 @@
   user-select: none;
   font-size: 0.75rem;
   font-variant-numeric: tabular-nums;
-  color: rgba(255, 255, 255, 0.5);
+  color: rgba(255, 255, 255, 0.42);
   min-width: 2.6em;
   text-align: center;
 }
@@ -314,11 +753,12 @@
 
 .progress-rail {
   right: 0;
-  background: rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.15);
 }
 
 .progress-fill {
-  background: #ffffff;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.72), #ffffff);
+  box-shadow: 0 0 12px rgba(255, 255, 255, 0.15);
 }
 
 .progress-fill::after {
@@ -348,18 +788,27 @@
 
 .gesture-toggle {
   position: absolute;
-  top: 1.2rem;
-  right: 1.2rem;
+  top: max(1.25rem, env(safe-area-inset-top));
+  right: 1.5rem;
   z-index: 20;
-  padding: 0.45rem 1rem;
-  border: 1px solid rgba(255, 255, 255, 0.25);
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-height: 2.65rem;
+  padding: 0.55rem 1rem;
+  border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 999px;
-  background: rgba(0, 0, 0, 0.35);
-  color: rgba(255, 255, 255, 0.8);
-  font-size: 0.8rem;
-  letter-spacing: 0.12em;
+  background: rgba(8, 9, 16, 0.5);
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 0.76rem;
+  font-weight: 520;
+  letter-spacing: 0.1em;
   cursor: pointer;
-  backdrop-filter: blur(8px);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 10px 30px rgba(0, 0, 0, 0.22);
+  -webkit-backdrop-filter: blur(14px) saturate(120%);
+  backdrop-filter: blur(14px) saturate(120%);
   transition:
     background 0.2s ease,
     color 0.2s ease,
@@ -367,26 +816,46 @@
 }
 
 .gesture-toggle:hover {
-  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.28);
+  background: rgba(22, 23, 34, 0.68);
   color: #ffffff;
 }
 
 .gesture-toggle.on {
-  border-color: rgba(255, 255, 255, 0.65);
+  border-color: rgba(255, 255, 255, 0.34);
+  background: rgba(20, 24, 32, 0.68);
   color: #ffffff;
+}
+
+.gesture-toggle-dot {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.3);
+  transition:
+    background 0.25s ease,
+    box-shadow 0.25s ease;
+}
+
+.gesture-toggle.on .gesture-toggle-dot {
+  background: #a8ffc9;
+  box-shadow: 0 0 10px rgba(105, 255, 163, 0.76);
 }
 
 .gesture-preview {
   position: absolute;
-  right: 1.2rem;
-  bottom: 4.5rem;
+  right: 1.5rem;
+  bottom: 8.5rem;
   z-index: 20;
   width: 160px;
-  border-radius: 10px;
+  border-radius: 16px;
   overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  background: #000000;
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(4, 5, 10, 0.88);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 16px 42px rgba(0, 0, 0, 0.46);
 }
 
 .gesture-preview video {
@@ -419,10 +888,109 @@
   background: rgba(180, 40, 40, 0.6);
 }
 
+button:focus-visible,
+input:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.88);
+  outline-offset: 3px;
+}
+
 @media (max-width: 1500px) {
+  .lyrics-panel {
+    right: 2%;
+    width: 26vw;
+    height: min(28rem, 54vh);
+  }
+
+  .lyric-line {
+    padding-block: 0.46rem;
+    font-size: 0.9rem;
+  }
+
+  .lyric-line.current {
+    font-size: 1.16rem;
+  }
+
+  .player-command-row {
+    grid-template-columns: minmax(12rem, 1fr) auto minmax(14rem, 1fr);
+    gap: clamp(0.65rem, 1.7vw, 1.8rem);
+  }
+
+  .player-utility-group {
+    gap: 0.2rem;
+  }
+
+  .player-tool-button {
+    width: 1.9rem;
+    height: 1.9rem;
+  }
+}
+
+@media (max-width: 1180px) {
   .face-title,
   .face-artist,
   .lyrics-panel {
     display: none;
+  }
+
+  .player-bar {
+    width: calc(100% - 1.5rem);
+  }
+
+  .player-command-row {
+    grid-template-columns: auto 1fr auto;
+    gap: 0.55rem;
+  }
+
+  .player-controls {
+    justify-self: center;
+  }
+
+  .player-tool-button.has-badge {
+    margin-right: 0;
+  }
+
+  .player-tool-badge {
+    display: none;
+  }
+}
+
+@media (max-width: 880px) {
+  .player-command-row {
+    display: flex;
+    justify-content: center;
+  }
+
+  .player-utility-group {
+    display: none;
+  }
+
+  .player-progress {
+    width: min(40rem, calc(100vw - 2rem));
+  }
+}
+
+@media (max-height: 760px) {
+  .player-bar {
+    bottom: 0.5rem;
+    gap: 0.3rem;
+  }
+
+  .player-now-playing {
+    font-size: 0.7rem;
+  }
+
+  .player-controls {
+    padding-block: 0.18rem;
+  }
+
+  .player-play-button {
+    width: 42px;
+    height: 42px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .player-state-dot.on {
+    transition: none;
   }
 }
